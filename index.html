@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mobile Controller</title>
+<meta name="theme-color" content="#1d4ed8">
+<style>
+  :root {
+    color-scheme: light dark;
+    --line: #e4e8ee;
+    --muted: #6b7684;
+    --bg: #f6f8fb;
+    --card: #ffffff;
+    --ink: #16202c;
+    --accent: #1d4ed8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --line: #2a3542; --muted: #93a1b1; --bg: #0f151c; --card: #161e27; --ink: #e8eef5; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { width: min(100%, 760px); margin: 0 auto; }
+  h1 { margin: 4px 0 2px; font-size: 20px; }
+  .sub { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+
+  .card {
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--card);
+  }
+  .card h2 { margin: 0 0 8px; font-size: 15px; }
+
+  label { display: block; margin-bottom: 9px; }
+  label span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--card);
+    color: inherit;
+    font: inherit;
+  }
+
+  button {
+    padding: 10px 16px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.flat { background: transparent; border: 1px solid var(--line); color: inherit; }
+  button[disabled] { opacity: .55; cursor: default; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .gap { flex: 1; }
+
+  .said { margin: 8px 0 0; color: var(--muted); font-size: 13px; min-height: 1.4em; }
+  .bad { color: #c0462f; }
+
+  /* ── the jobs ── */
+  ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  li.job {
+    padding: 11px 13px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line);
+    border-radius: 0 10px 10px 0;
+    background: var(--card);
+  }
+  li.job[data-state="open"] { border-left-color: #2f9e6b; }
+  li.job[data-state="closed"] { border-left-color: var(--muted); }
+  .job-top { display: flex; align-items: baseline; gap: 8px; }
+  .job-top strong { font-size: 14px; }
+  .job-top em { color: var(--muted); font-size: 12px; font-style: normal; }
+  .job-src { margin: 2px 0 7px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, monospace; }
+  .bar { height: 7px; border-radius: 999px; background: var(--line); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .job-foot { display: flex; gap: 8px; margin-top: 5px; color: var(--muted); font-size: 12px; }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Mobile Controller</h1>
+  <p class="sub">The scraper's jobs, and where each has got to.</p>
+
+  <!-- ── where to look ─────────────────────────────────────────────── -->
+  <!-- Asked once and remembered. The anon key is designed to be public
+       and is what every browser client uses; it is not the service key,
+       and nothing here will accept one. -->
+  <section class="card" id="setup">
+    <h2>Connect</h2>
+    <label><span>Supabase URL</span>
+      <input id="url" placeholder="https://yourproject.supabase.co" autocomplete="off"></label>
+    <label><span>Anon key</span>
+      <input id="anon" placeholder="eyJ… or sb_publishable_…" autocomplete="off"></label>
+    <label><span>Jobs table</span>
+      <input id="table" value="jobs" autocomplete="off"></label>
+
+    <!-- The alerts Worker, so a button here can make something happen on
+         a machine somewhere else. The send key is kept in this browser
+         and is never committed to the site: anybody holding it can notify
+         every device that ever subscribed. -->
+    <label><span>Alerts Worker URL</span>
+      <input id="worker" placeholder="https://test-alerts.makethemcall.workers.dev" autocomplete="off"></label>
+    <label><span>Send key</span>
+      <input id="sendkey" type="password" placeholder="kept in this browser only" autocomplete="off"></label>
+    <div class="row" style="gap:12px">
+      <label style="flex:1"><span>Listener port</span><input id="port" value="8765" autocomplete="off"></label>
+      <label style="flex:1"><span>Listener path</span><input id="path" value="/trigger" autocomplete="off"></label>
+    </div>
+    <div class="row"><button id="save-setup">Save</button></div>
+    <p class="said" id="setup-said"></p>
+  </section>
+
+  <!-- ── who ───────────────────────────────────────────────────────── -->
+  <section class="card hidden" id="login">
+    <h2>Sign in</h2>
+    <label><span>Email</span><input id="email" type="email" autocomplete="username"></label>
+    <label><span>Password</span><input id="password" type="password" autocomplete="current-password"></label>
+    <div class="row">
+      <button id="go">Sign in</button>
+      <span class="gap"></span>
+      <button class="flat" id="change">Change connection</button>
+    </div>
+    <p class="said" id="login-said"></p>
+  </section>
+
+  <!-- ── where to go, once signed in ───────────────────────────────── -->
+  <section class="card hidden" id="menu">
+    <h2>Signed in</h2>
+    <p class="said" id="who-said"></p>
+    <div class="row">
+      <button id="open-jobs">Scraper jobs</button>
+      <span class="gap"></span>
+      <button class="flat" id="out">Sign out</button>
+    </div>
+  </section>
+
+  <!-- ── the jobs ──────────────────────────────────────────────────── -->
+  <section class="card hidden" id="jobs">
+    <div class="row">
+      <button class="flat" id="back">&larr;</button>
+      <h2 style="margin:0">Jobs</h2>
+      <span class="gap"></span>
+      <button class="flat" id="refresh">Refresh</button>
+    </div>
+    <p class="said" id="jobs-said"></p>
+    <ul id="list"></ul>
+  </section>
+</main>
+
+<script>
+/* ============================================================
+ *  Mobile Controller — a prototype.
+ *
+ *  Sign in to the scraper's Supabase, then read the jobs table.
+ *  Everything is the anon key plus a signed-in session, so what
+ *  this can see is exactly what that account's row level
+ *  security allows — this page grants nothing.
+ * ============================================================ */
+
+const KEY = "mobile-controller:v1";
+const $ = (id) => document.getElementById(id);
+
+const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
+const write = (next) => { try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {} };
+
+let state = read();
+
+let where = "menu";
+
+function show() {
+  const ready = state.url && state.anon;
+  const inside = Boolean(state.token);
+
+  $("setup").classList.toggle("hidden", Boolean(ready));
+  $("login").classList.toggle("hidden", !ready || inside);
+  $("menu").classList.toggle("hidden", !inside || where !== "menu");
+  $("jobs").classList.toggle("hidden", !inside || where !== "jobs");
+
+  if (ready) {
+    $("url").value = state.url || "";
+    $("anon").value = state.anon || "";
+    $("table").value = state.table || "jobs";
+    $("worker").value = state.worker || "";
+    $("sendkey").value = state.sendKey || "";
+    $("port").value = state.port || "8765";
+    $("path").value = state.path || "/trigger";
+  }
+  if (inside) $("who-said").textContent = "Signed in as " + (state.who || "") + ".";
+}
+
+function say(where, text, bad) {
+  const el = $(where);
+  el.textContent = text;
+  el.classList.toggle("bad", Boolean(bad));
+}
+
+/* ── connection ───────────────────────────────────────────────────── */
+
+$("save-setup").addEventListener("click", () => {
+  const url = $("url").value.trim().replace(/\/$/, "");
+  const anon = $("anon").value.trim();
+  const table = $("table").value.trim() || "jobs";
+
+  if (!/^https:\/\/.+/.test(url)) return say("setup-said", "That is not an https address.", true);
+  // Said plainly: a service key here would be readable by anybody who
+  // opens this page, and it bypasses every policy in the database.
+  if (/^sb_secret_|service_role/.test(anon)) {
+    return say("setup-said", "That looks like a service key. Use the anon/publishable one — a service key in a page can be read by anybody.", true);
+  }
+  if (!anon) return say("setup-said", "The anon key is missing.", true);
+
+  state = {
+    ...state,
+    url,
+    anon,
+    table,
+    worker: $("worker").value.trim().replace(/\/$/, ""),
+    sendKey: $("sendkey").value.trim(),
+    port: $("port").value.trim() || "8765",
+    path: ($("path").value.trim() || "/trigger").replace(/^\/?/, "/"),
+  };
+  write(state);
+  say("setup-said", "");
+  show();
+});
+
+$("change").addEventListener("click", () => {
+  state = { ...state, token: "" };
+  write(state);
+  $("setup").classList.remove("hidden");
+  show();
+});
+
+/* ── signing in ───────────────────────────────────────────────────── */
+
+$("go").addEventListener("click", async () => {
+  const email = $("email").value.trim();
+  const password = $("password").value;
+  if (!email || !password) return say("login-said", "Both are needed.", true);
+
+  $("go").disabled = true;
+  say("login-said", "Signing in…");
+  try {
+    const response = await fetch(state.url + "/auth/v1/token?grant_type=password", {
+      method: "POST",
+      headers: { apikey: state.anon, "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      // Never "no such user": whether an email exists is not this page's
+      // to reveal.
+      return say("login-said", "That email and password do not match.", true);
+    }
+    state = { ...state, token: body.access_token, who: email };
+    write(state);
+    say("login-said", "");
+    show();
+    await load();
+  } catch (error) {
+    say("login-said", "Could not reach that project: " + error.message, true);
+  } finally {
+    $("go").disabled = false;
+  }
+});
+
+$("out").addEventListener("click", () => {
+  state = { ...state, token: "", who: "" };
+  write(state);
+  $("list").innerHTML = "";
+  show();
+});
+
+/* ── the jobs ─────────────────────────────────────────────────────── */
+
+const pct = (done, of) => (of > 0 ? Math.round((done / of) * 100) : 0);
+
+/* The column names are guessed from what the dashboard shows, and each
+   falls back rather than printing "undefined" at somebody. */
+const pick = (row, ...names) => {
+  for (const name of names) {
+    if (row[name] !== undefined && row[name] !== null && row[name] !== "") return row[name];
+  }
+  return "";
+};
+
+async function load() {
+  if (!state.token) return;
+  say("jobs-said", "Reading…");
+  try {
+    const response = await fetch(
+      state.url + "/rest/v1/" + encodeURIComponent(state.table || "jobs") + "?select=*&order=created_at.desc&limit=50",
+      { headers: { apikey: state.anon, authorization: "Bearer " + state.token } },
+    );
+    const body = await response.json();
+
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        state = { ...state, token: "" };
+        write(state);
+        show();
+        return say("login-said", "That session has expired. Sign in again.", true);
+      }
+      // 404 here means the table name is wrong, which is a one-word fix.
+      return say("jobs-said", (body && body.message) || ("The database answered " + response.status), true);
+    }
+
+    draw(Array.isArray(body) ? body : []);
+    say("jobs-said", body.length + (body.length === 1 ? " job" : " jobs") + " · read " + new Date().toLocaleTimeString());
+  } catch (error) {
+    say("jobs-said", "Could not read it: " + error.message, true);
+  }
+}
+
+function draw(rows) {
+  const list = $("list");
+  list.innerHTML = "";
+
+  if (rows.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "job";
+    empty.textContent = "No jobs in that table.";
+    list.append(empty);
+    return;
+  }
+
+  for (const row of rows) {
+    const done = Number(pick(row, "completed", "done", "progress") || 0);
+    const of = Number(pick(row, "total", "of", "queries") || 0);
+    const state_ = String(pick(row, "state", "status") || "").toLowerCase();
+
+    const li = document.createElement("li");
+    li.className = "job";
+    li.dataset.state = state_.includes("open") || state_.includes("running") ? "open" : "closed";
+
+    const top = document.createElement("div");
+    top.className = "job-top";
+    const name = document.createElement("strong");
+    name.textContent = String(pick(row, "job", "job_id", "name", "id"));
+    const machine = document.createElement("em");
+    machine.textContent = String(pick(row, "machine", "host", "node"));
+    top.append(name, machine);
+
+    const src = document.createElement("p");
+    src.className = "job-src";
+    src.textContent = String(pick(row, "source", "query", "search"));
+
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const fill = document.createElement("i");
+    fill.style.width = pct(done, of) + "%";
+    bar.append(fill);
+
+    const foot = document.createElement("div");
+    foot.className = "job-foot";
+    const where = document.createElement("span");
+    where.textContent = of ? done + "/" + of + " · " + pct(done, of) + "%" : "no progress recorded";
+    const how = document.createElement("span");
+    how.textContent = String(pick(row, "status", "state"));
+    foot.append(where, how);
+
+    /* Test buttons for now: each sends a push carrying the instruction,
+       rather than touching the scraper from here. */
+    const acts = document.createElement("div");
+    acts.className = "row";
+    acts.style.marginTop = "8px";
+    const job = String(pick(row, "job", "job_id", "name", "id"));
+
+    for (const verb of ["resume", "pause"]) {
+      const button = document.createElement("button");
+      button.className = verb === "resume" ? "" : "flat";
+      button.textContent = verb === "resume" ? "Start" : "Break";
+      button.addEventListener("click", () => void trigger(verb, job));
+      acts.append(button);
+    }
+
+    li.append(top, src, bar, foot, acts);
+    list.append(li);
+  }
+}
+
+$("refresh").addEventListener("click", () => void load());
+$("open-jobs").addEventListener("click", () => { where = "jobs"; show(); void load(); });
+$("back").addEventListener("click", () => { where = "menu"; show(); });
+
+/* ── making something happen on a machine somewhere else ──────────────
+ *
+ * The button does not reach the scraper. It sends a push, and the
+ * service worker on whichever machine receives it POSTs to the listener
+ * running there — which is the whole point: the phone is not on that
+ * network, and the machine is.
+ *
+ * So what travels is a notification carrying the instruction, and the
+ * device nearest the scraper carries it out.
+ */
+async function trigger(verb, job) {
+  if (!state.worker || !state.sendKey) {
+    return say("jobs-said", "No alerts Worker is set, so there is nothing to send through. Change connection.", true);
+  }
+  say("jobs-said", verb + " " + job + "…");
+  try {
+    const response = await fetch(state.worker + "/send", {
+      method: "POST",
+      headers: { authorization: "Bearer " + state.sendKey, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: verb + " job " + job,
+        body: "Sent from the mobile controller.",
+        url: "/",
+        post: {
+          port: state.port || "8765",
+          path: state.path || "/trigger",
+          // The shape asked for: a list of actions, each naming its job.
+          // A list rather than one, because stopping three jobs is one
+          // message rather than three.
+          body: [{ action: verb, id: String(job) }],
+        },
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return say("jobs-said", response.status === 401
+        ? "The Worker refused that send key."
+        : (body.error || ("The Worker answered " + response.status)), true);
+    }
+    say("jobs-said", "Sent to " + (body.sent ?? 0) + (body.sent === 1 ? " device" : " devices") +
+      ". The one running the listener will act on it.");
+  } catch (error) {
+    say("jobs-said", "Could not reach the Worker: " + error.message, true);
+  }
+}
+
+/* ── start ────────────────────────────────────────────────────────── */
+
+show();
+if (state.token) void load();
+</script>
+</body>
+</html>
