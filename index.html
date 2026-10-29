@@ -125,7 +125,7 @@
       <label><span>Anon key</span>
         <input id="anon" placeholder="eyJ… or sb_publishable_…" autocomplete="off"></label>
       <label><span>Jobs table</span>
-        <input id="table" value="jobs" autocomplete="off"></label>
+        <input id="table" value="scrape_jobs" autocomplete="off"></label>
 
       <p class="said" style="margin:14px 0 8px">The rest is for triggering the scraper from a push, which comes later. Leave it empty to just watch the jobs.</p>
 
@@ -176,13 +176,31 @@
  *  security allows — this page grants nothing.
  * ============================================================ */
 
+/*
+ * Where the scraper keeps its work.
+ *
+ * Baked in, because this is opened on a phone to see whether the
+ * scraper is still going — being asked for a project URL first is the
+ * thing that makes somebody put the phone down.
+ *
+ * The publishable key is the public one by design: it is in every page
+ * the planner itself serves, and what it can see is decided by row level
+ * security plus whoever is signed in. It is not the secret key, and this
+ * page refuses one.
+ */
+const SCRAPER = {
+  url: "https://tqrowtgkszusuitjdbcw.supabase.co",
+  anon: "sb_publishable_8rshOE9Zo_TnRtVoJzVJmg_jV_qfwMd",
+  table: "scrape_jobs",
+};
+
 const KEY = "mobile-controller:v1";
 const $ = (id) => document.getElementById(id);
 
 const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
 const write = (next) => { try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {} };
 
-let state = read();
+let state = { ...SCRAPER, ...read() };
 
 let where = "menu";
 
@@ -207,7 +225,7 @@ function show() {
   if (ready) {
     $("url").value = state.url || "";
     $("anon").value = state.anon || "";
-    $("table").value = state.table || "jobs";
+    $("table").value = state.table || "scrape_jobs";
     $("worker").value = state.worker || "";
     $("sendkey").value = state.sendKey || "";
     $("port").value = state.port || "8765";
@@ -227,7 +245,7 @@ function say(where, text, bad) {
 $("save-setup").addEventListener("click", () => {
   const url = $("url").value.trim().replace(/\/$/, "");
   const anon = $("anon").value.trim();
-  const table = $("table").value.trim() || "jobs";
+  const table = $("table").value.trim() || "scrape_jobs";
 
   if (!/^https:\/\/.+/.test(url)) return say("setup-said", "That is not an https address.", true);
   // Said plainly: a service key here would be readable by anybody who
@@ -307,95 +325,121 @@ const pick = (row, ...names) => {
 
 async function load() {
   if (!state.token) return;
-  say("jobs-said", "Reading…");
+  say("jobs-said", "Reading\u2026");
   try {
-    const response = await fetch(
-      state.url + "/rest/v1/" + encodeURIComponent(state.table || "jobs") + "?select=*&order=created_at.desc&limit=50",
-      { headers: { apikey: state.anon, authorization: "Bearer " + state.token } },
-    );
-    const body = await response.json();
+    const head = { apikey: state.anon, authorization: "Bearer " + state.token };
 
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        state = { ...state, token: "" };
-        write(state);
-        show();
-        return say("login-said", "That session has expired. Sign in again.", true);
-      }
-      // 404 here means the table name is wrong, which is a one-word fix.
-      return say("jobs-said", (body && body.message) || ("The database answered " + response.status), true);
+    /* Both, because neither answers the question alone: a job says what
+       it is doing, and a batch says how much of it there is. */
+    const [jobsAt, batchesAt] = await Promise.all([
+      fetch(state.url + "/rest/v1/" + (state.table || "scrape_jobs") +
+        "?select=id,batch_id,block,status,machine,count,claimed_at,finished_at,error&order=id.desc&limit=500", { headers: head }),
+      fetch(state.url + "/rest/v1/scrape_batches?select=id,label,phase,status,created_at&order=id.desc&limit=50", { headers: head }),
+    ]);
+
+    if (jobsAt.status === 401 || jobsAt.status === 403) {
+      state = { ...state, token: "" };
+      write(state);
+      show();
+      return say("login-said", "That session has expired. Sign in again.", true);
+    }
+    if (!jobsAt.ok) {
+      const body = await jobsAt.json().catch(() => ({}));
+      return say("jobs-said", (body && body.message) || ("The database answered " + jobsAt.status), true);
     }
 
-    draw(Array.isArray(body) ? body : []);
-    say("jobs-said", body.length + (body.length === 1 ? " job" : " jobs") + " · read " + new Date().toLocaleTimeString());
+    const jobs = await jobsAt.json();
+    const batches = batchesAt.ok ? await batchesAt.json() : [];
+    draw(Array.isArray(jobs) ? jobs : [], Array.isArray(batches) ? batches : []);
+
+    const running = jobs.filter((job) => job.status === "running").length;
+    say("jobs-said", running + " running of " + jobs.length + " \u00b7 read " + new Date().toLocaleTimeString());
   } catch (error) {
     say("jobs-said", "Could not read it: " + error.message, true);
   }
 }
 
-function draw(rows) {
+function draw(jobs, batches) {
   const list = $("list");
   list.innerHTML = "";
 
-  if (rows.length === 0) {
+  if (jobs.length === 0) {
     const empty = document.createElement("li");
     empty.className = "job";
-    empty.textContent = "No jobs in that table.";
+    empty.textContent = "No jobs in the pool right now.";
     list.append(empty);
     return;
   }
 
-  for (const row of rows) {
-    const done = Number(pick(row, "completed", "done", "progress") || 0);
-    const of = Number(pick(row, "total", "of", "queries") || 0);
-    const state_ = String(pick(row, "state", "status") || "").toLowerCase();
+  /* A batch is the unit somebody thinks in — "the Washington run" — and
+     a job is one block of it. So the batch is the row, with how far
+     through it is, and the jobs actually moving are named underneath. */
+  const named = new Map(batches.map((batch) => [batch.id, batch]));
+  const byBatch = new Map();
+  for (const job of jobs) {
+    const bucket = byBatch.get(job.batch_id) || [];
+    bucket.push(job);
+    byBatch.set(job.batch_id, bucket);
+  }
+
+  for (const [id, mine] of byBatch) {
+    const batch = named.get(id) || {};
+    const done = mine.filter((job) => job.status === "done").length;
+    const running = mine.filter((job) => job.status === "running");
+    const failed = mine.filter((job) => job.status === "failed").length;
 
     const li = document.createElement("li");
     li.className = "job";
-    li.dataset.state = state_.includes("open") || state_.includes("running") ? "open" : "closed";
+    li.dataset.state = batch.status === "cancelled" ? "closed" : running.length ? "open" : "closed";
 
     const top = document.createElement("div");
     top.className = "job-top";
     const name = document.createElement("strong");
-    name.textContent = String(pick(row, "job", "job_id", "name", "id"));
-    const machine = document.createElement("em");
-    machine.textContent = String(pick(row, "machine", "host", "node"));
-    top.append(name, machine);
-
-    const src = document.createElement("p");
-    src.className = "job-src";
-    src.textContent = String(pick(row, "source", "query", "search"));
+    name.textContent = batch.label || ("Batch " + id);
+    const phase = document.createElement("em");
+    phase.textContent = (batch.phase || "") + (batch.status === "cancelled" ? " \u00b7 cancelled" : "");
+    top.append(name, phase);
 
     const bar = document.createElement("div");
     bar.className = "bar";
     const fill = document.createElement("i");
-    fill.style.width = pct(done, of) + "%";
+    fill.style.width = (mine.length ? Math.round((done / mine.length) * 100) : 0) + "%";
     bar.append(fill);
 
     const foot = document.createElement("div");
     foot.className = "job-foot";
     const where = document.createElement("span");
-    where.textContent = of ? done + "/" + of + " · " + pct(done, of) + "%" : "no progress recorded";
+    where.textContent = done + "/" + mine.length + " done";
     const how = document.createElement("span");
-    how.textContent = String(pick(row, "status", "state"));
+    how.textContent = running.length + " running" + (failed ? " \u00b7 " + failed + " failed" : "");
     foot.append(where, how);
 
-    /* Test buttons for now: each sends a push carrying the instruction,
-       rather than touching the scraper from here. */
+    li.append(top, bar, foot);
+
+    // The ones actually moving, with the machine doing them.
+    for (const job of running.slice(0, 8)) {
+      const line = document.createElement("p");
+      line.className = "job-src";
+      line.textContent = (job.machine || "unclaimed") + " \u00b7 " + (job.block || job.id) +
+        (job.count ? " \u00b7 " + job.count + " rows" : "");
+      li.append(line);
+    }
+
+    /* Test buttons: these send a push, so the machine beside the scraper
+       does the work. Wired to the batch, which is what somebody actually
+       wants to stop. */
     const acts = document.createElement("div");
     acts.className = "row";
     acts.style.marginTop = "8px";
-    const job = String(pick(row, "job", "job_id", "name", "id"));
-
     for (const verb of ["resume", "pause"]) {
       const button = document.createElement("button");
       button.className = verb === "resume" ? "" : "flat";
       button.textContent = verb === "resume" ? "Start" : "Break";
-      button.addEventListener("click", () => void trigger(verb, job));
+      button.addEventListener("click", () => void trigger(verb, String(id)));
       acts.append(button);
     }
+    li.append(acts);
 
-    li.append(top, src, bar, foot, acts);
     list.append(li);
   }
 }
