@@ -89,6 +89,9 @@
   .bar i { display: block; height: 100%; background: var(--accent); }
   .job-foot { display: flex; gap: 8px; margin-top: 5px; color: var(--muted); font-size: 12px; }
 
+  summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+  details[open] summary { margin-bottom: 10px; }
+
   .hidden { display: none; }
 </style>
 </head>
@@ -97,46 +100,47 @@
   <h1>Mobile Controller</h1>
   <p class="sub">The scraper's jobs, and where each has got to.</p>
 
-  <!-- ── where to look ─────────────────────────────────────────────── -->
-  <!-- Asked once and remembered. The anon key is designed to be public
-       and is what every browser client uses; it is not the service key,
-       and nothing here will accept one. -->
-  <section class="card" id="setup">
-    <h2>Connect</h2>
-    <label><span>Supabase URL</span>
-      <input id="url" placeholder="https://yourproject.supabase.co" autocomplete="off"></label>
-    <label><span>Anon key</span>
-      <input id="anon" placeholder="eyJ… or sb_publishable_…" autocomplete="off"></label>
-    <label><span>Jobs table</span>
-      <input id="table" value="jobs" autocomplete="off"></label>
-
-    <!-- The alerts Worker, so a button here can make something happen on
-         a machine somewhere else. The send key is kept in this browser
-         and is never committed to the site: anybody holding it can notify
-         every device that ever subscribed. -->
-    <label><span>Alerts Worker URL</span>
-      <input id="worker" placeholder="https://test-alerts.makethemcall.workers.dev" autocomplete="off"></label>
-    <label><span>Send key</span>
-      <input id="sendkey" type="password" placeholder="kept in this browser only" autocomplete="off"></label>
-    <div class="row" style="gap:12px">
-      <label style="flex:1"><span>Listener port</span><input id="port" value="8765" autocomplete="off"></label>
-      <label style="flex:1"><span>Listener path</span><input id="path" value="/trigger" autocomplete="off"></label>
-    </div>
-    <div class="row"><button id="save-setup">Save</button></div>
-    <p class="said" id="setup-said"></p>
-  </section>
-
-  <!-- ── who ───────────────────────────────────────────────────────── -->
-  <section class="card hidden" id="login">
+  <!-- ── signing in ─────────────────────────────────────────────────
+       First, and on its own. This is a thing somebody opens on a phone
+       to see whether the scraper is still going; the project it talks to
+       is set once and then never thought about again. -->
+  <section class="card" id="login">
     <h2>Sign in</h2>
-    <label><span>Email</span><input id="email" type="email" autocomplete="username"></label>
+    <label><span>Email</span><input id="email" type="email" autocomplete="username" inputmode="email"></label>
     <label><span>Password</span><input id="password" type="password" autocomplete="current-password"></label>
-    <div class="row">
-      <button id="go">Sign in</button>
-    </div>
+    <div class="row"><button id="go">Sign in</button></div>
     <p class="said" id="needs"></p>
     <p class="said" id="login-said"></p>
   </section>
+
+  <!-- ── what it talks to ───────────────────────────────────────────
+       Out of the way, because it is answered once. It opens itself when
+       there is nothing there yet, since a sign-in with nowhere to sign
+       in to would be a dead end with no explanation. -->
+  <details class="card" id="setup-wrap">
+    <summary>Connection</summary>
+    <div id="setup">
+      <label><span>Supabase URL</span>
+        <input id="url" placeholder="https://yourproject.supabase.co" autocomplete="off" inputmode="url"></label>
+      <label><span>Anon key</span>
+        <input id="anon" placeholder="eyJ… or sb_publishable_…" autocomplete="off"></label>
+      <label><span>Jobs table</span>
+        <input id="table" value="jobs" autocomplete="off"></label>
+
+      <p class="said" style="margin:14px 0 8px">The rest is for triggering the scraper from a push, which comes later. Leave it empty to just watch the jobs.</p>
+
+      <label><span>Alerts Worker URL</span>
+        <input id="worker" placeholder="https://test-alerts.makethemcall.workers.dev" autocomplete="off" inputmode="url"></label>
+      <label><span>Send key</span>
+        <input id="sendkey" type="password" placeholder="kept in this browser only" autocomplete="off"></label>
+      <div class="row" style="gap:12px">
+        <label style="flex:1"><span>Listener port</span><input id="port" value="8765" autocomplete="off" inputmode="numeric"></label>
+        <label style="flex:1"><span>Listener path</span><input id="path" value="/trigger" autocomplete="off"></label>
+      </div>
+      <div class="row"><button id="save-setup">Save</button></div>
+      <p class="said" id="setup-said"></p>
+    </div>
+  </details>
 
   <!-- ── where to go, once signed in ───────────────────────────────── -->
   <section class="card hidden" id="menu">
@@ -190,11 +194,13 @@ function show() {
      connection was saved left a first visit looking like a form with
      nothing after it. It is shown and disabled, which says what comes
      next instead of leaving somebody to guess. */
-  $("setup").classList.toggle("hidden", inside);
   $("login").classList.toggle("hidden", inside);
+  $("setup-wrap").classList.toggle("hidden", inside);
+  // Open on a first visit, shut once it is answered.
+  $("setup-wrap").open = !ready;
 
   for (const id of ["email", "password", "go"]) $(id).disabled = !ready;
-  $("needs").textContent = ready ? "" : "Fill in the connection above and press Save first.";
+  $("needs").textContent = ready ? "" : "No project connected yet — fill in Connection below.";
   $("menu").classList.toggle("hidden", !inside || where !== "menu");
   $("jobs").classList.toggle("hidden", !inside || where !== "jobs");
 
@@ -242,7 +248,7 @@ $("save-setup").addEventListener("click", () => {
     path: ($("path").value.trim() || "/trigger").replace(/^\/?/, "/"),
   };
   write(state);
-  say("setup-said", "");
+  say("setup-said", "Saved. Sign in above.");
   show();
 });
 
