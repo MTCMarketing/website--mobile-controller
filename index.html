@@ -133,9 +133,8 @@
     <label><span>Password</span><input id="password" type="password" autocomplete="current-password"></label>
     <div class="row">
       <button id="go">Sign in</button>
-      <span class="gap"></span>
-      <button class="flat" id="change">Change connection</button>
     </div>
+    <p class="said" id="needs"></p>
     <p class="said" id="login-said"></p>
   </section>
 
@@ -187,8 +186,15 @@ function show() {
   const ready = state.url && state.anon;
   const inside = Boolean(state.token);
 
-  $("setup").classList.toggle("hidden", Boolean(ready));
-  $("login").classList.toggle("hidden", !ready || inside);
+  /* Both are on screen from the start: hiding the sign-in until the
+     connection was saved left a first visit looking like a form with
+     nothing after it. It is shown and disabled, which says what comes
+     next instead of leaving somebody to guess. */
+  $("setup").classList.toggle("hidden", inside);
+  $("login").classList.toggle("hidden", inside);
+
+  for (const id of ["email", "password", "go"]) $(id).disabled = !ready;
+  $("needs").textContent = ready ? "" : "Fill in the connection above and press Save first.";
   $("menu").classList.toggle("hidden", !inside || where !== "menu");
   $("jobs").classList.toggle("hidden", !inside || where !== "jobs");
 
@@ -237,13 +243,6 @@ $("save-setup").addEventListener("click", () => {
   };
   write(state);
   say("setup-said", "");
-  show();
-});
-
-$("change").addEventListener("click", () => {
-  state = { ...state, token: "" };
-  write(state);
-  $("setup").classList.remove("hidden");
   show();
 });
 
