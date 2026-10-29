@@ -162,6 +162,11 @@
       <button class="flat" id="refresh">Refresh</button>
     </div>
     <p class="said" id="jobs-said"></p>
+
+    <h3 style="margin:14px 0 6px;font-size:13px">On the machines</h3>
+    <ul id="live"></ul>
+
+    <h3 style="margin:18px 0 6px;font-size:13px">In the pool</h3>
     <ul id="list"></ul>
   </section>
 </main>
@@ -331,7 +336,16 @@ async function load() {
 
     /* Both, because neither answers the question alone: a job says what
        it is doing, and a batch says how much of it there is. */
-    const [jobsAt, batchesAt] = await Promise.all([
+    /* Two different things, and both are real.
+     *
+     * machine_jobs is what each machine says it is doing — the jobs the
+     * planner finds by SSH, reported outwards so something that is not
+     * on that network can see them. scrape_jobs is the pool machines
+     * pull from. A phone wants the first and is told about the second.
+     */
+    const [liveAt, seenAt, jobsAt, batchesAt] = await Promise.all([
+      fetch(state.url + "/rest/v1/machine_jobs?select=*&order=updated_at.desc&limit=200", { headers: head }),
+      fetch(state.url + "/rest/v1/machine_status?select=*&order=last_seen.desc&limit=50", { headers: head }),
       fetch(state.url + "/rest/v1/" + (state.table || "scrape_jobs") +
         "?select=id,batch_id,block,status,machine,count,claimed_at,finished_at,error&order=id.desc&limit=500", { headers: head }),
       fetch(state.url + "/rest/v1/scrape_batches?select=id,label,phase,status,created_at&order=id.desc&limit=50", { headers: head }),
@@ -350,12 +364,108 @@ async function load() {
 
     const jobs = await jobsAt.json();
     const batches = batchesAt.ok ? await batchesAt.json() : [];
+    // 404 means the table is not there yet, which is a thing to say once
+    // rather than an error to show every time.
+    const live = liveAt.ok ? await liveAt.json() : [];
+    const seen = seenAt.ok ? await seenAt.json() : [];
+
+    drawLive(Array.isArray(live) ? live : [], Array.isArray(seen) ? seen : [], liveAt.status);
     draw(Array.isArray(jobs) ? jobs : [], Array.isArray(batches) ? batches : []);
 
-    const running = jobs.filter((job) => job.status === "running").length;
-    say("jobs-said", running + " running of " + jobs.length + " \u00b7 read " + new Date().toLocaleTimeString());
+    const running = (Array.isArray(live) ? live : []).filter((job) => job.status === "running").length;
+    say("jobs-said", running + " running on the machines \u00b7 " + jobs.length +
+      " in the pool \u00b7 read " + new Date().toLocaleTimeString());
   } catch (error) {
     say("jobs-said", "Could not read it: " + error.message, true);
+  }
+}
+
+/**
+ * What the machines say they are doing.
+ *
+ * Reported by each machine rather than found by looking, so a machine
+ * that has stopped saying anything is its own kind of answer and is
+ * shown as one — "nothing running" and "nobody has heard from mm2 since
+ * Tuesday" are not the same news.
+ */
+function drawLive(jobs, machines, status) {
+  const list = $("live");
+  list.innerHTML = "";
+
+  if (status === 404) {
+    const none = document.createElement("li");
+    none.className = "job";
+    none.textContent = "The machines are not reporting yet — machine_jobs does not exist on this project.";
+    list.append(none);
+    return;
+  }
+
+  const old = Date.now() - 10 * 60 * 1000;
+  for (const machine of machines) {
+    const quiet = new Date(machine.last_seen).getTime() < old;
+    const li = document.createElement("li");
+    li.className = "job";
+    li.dataset.state = quiet ? "closed" : "open";
+
+    const top = document.createElement("div");
+    top.className = "job-top";
+    const name = document.createElement("strong");
+    name.textContent = machine.machine;
+    const when = document.createElement("em");
+    when.textContent = quiet
+      ? "last heard " + new Date(machine.last_seen).toLocaleString()
+      : machine.jobs + (machine.jobs === 1 ? " job" : " jobs");
+    top.append(name, when);
+    li.append(top);
+
+    if (machine.note) {
+      const note = document.createElement("p");
+      note.className = "job-src";
+      note.textContent = machine.note;
+      li.append(note);
+    }
+
+    for (const job of jobs.filter((one) => one.machine === machine.machine)) {
+      const line = document.createElement("div");
+      line.style.marginTop = "8px";
+
+      const head = document.createElement("div");
+      head.className = "job-top";
+      const id = document.createElement("strong");
+      id.textContent = job.job;
+      const how = document.createElement("em");
+      how.textContent = job.status + (job.note ? " \u00b7 " + job.note : "");
+      head.append(id, how);
+
+      const src = document.createElement("p");
+      src.className = "job-src";
+      src.textContent = job.source || "";
+
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      const fill = document.createElement("i");
+      fill.style.width = (job.total ? Math.round((job.done / job.total) * 100) : 0) + "%";
+      bar.append(fill);
+
+      const foot = document.createElement("div");
+      foot.className = "job-foot";
+      const count = document.createElement("span");
+      count.textContent = job.done + "/" + job.total +
+        (job.total ? " \u00b7 " + Math.round((job.done / job.total) * 100) + "%" : "");
+      foot.append(count);
+
+      line.append(head, src, bar, foot);
+      li.append(line);
+    }
+
+    list.append(li);
+  }
+
+  if (machines.length === 0 && jobs.length === 0 && status !== 404) {
+    const none = document.createElement("li");
+    none.className = "job";
+    none.textContent = "No machine has reported in yet.";
+    list.append(none);
   }
 }
 
