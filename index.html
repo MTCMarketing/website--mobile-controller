@@ -219,6 +219,18 @@ const SCRAPER = {
   anon: "sb_publishable_8rshOE9Zo_TnRtVoJzVJmg_jV_qfwMd",
 };
 
+/*
+ * Where the PWA alerts keep their register of devices (which device is named
+ * MM1, MM2): the Worker writes it into the entity tracker's project, not the
+ * scraper's, and holds the devices of more than one Worker, so the Worker is
+ * named too. The key is that project's publishable one, public by design.
+ */
+const REGISTER = {
+  url: "https://wfifewzetvhefddplqsz.supabase.co",
+  anon: "sb_publishable_cT1jH55AwYuSsYJkj0e6FA_bGffCddD",
+  worker: "test-alerts",
+};
+
 const KEY = "mobile-controller:v1";
 const EVERY_MS = 10000;
 const $ = (id) => document.getElementById(id);
@@ -604,12 +616,13 @@ const ACTION_WORDS = {
 
 async function deviceOf(machine) {
   const response = await fetch(
-    state.url + "/rest/v1/pwa_subscribers?gone_at=is.null&select=sub_id,label&order=at.desc&limit=500",
-    { headers: { apikey: state.anon } },
+    REGISTER.url + "/rest/v1/pwa_subscribers?worker=eq." + encodeURIComponent(REGISTER.worker) +
+      "&gone_at=is.null&select=sub_id,label&order=at.desc&limit=500",
+    { headers: { apikey: REGISTER.anon } },
   );
   if (!response.ok) {
     throw new Error(response.status === 404
-      ? "The PWA's list of devices is not in the project."
+      ? "The PWA's list of devices (pwa_subscribers) is not in the entity tracker's project yet."
       : "The list of devices could not be read (" + response.status + ").");
   }
   const rows = await response.json();
