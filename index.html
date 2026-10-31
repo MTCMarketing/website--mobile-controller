@@ -9,14 +9,24 @@
   :root {
     color-scheme: light dark;
     --line: #e4e8ee;
-    --muted: #6b7684;
+    --muted: #586374;
     --bg: #f6f8fb;
     --card: #ffffff;
     --ink: #16202c;
     --accent: #1d4ed8;
+    --verified: #1f8a5b;
+    --warn: #b45309;
+    --bad: #c0462f;
+    --ok: #1f7a4f;
+    --btn: #1d4ed8;
+    --btn-bad: #c0462f;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --line: #2a3542; --muted: #93a1b1; --bg: #0f151c; --card: #161e27; --ink: #e8eef5; }
+    :root {
+      --line: #2a3542; --muted: #93a1b1; --bg: #0f151c; --card: #161e27; --ink: #e8eef5;
+      --accent: #5b8def; --verified: #3fbf86; --warn: #f0a04b; --bad: #ef7a63; --ok: #4cc58a;
+      --btn: #2955c9; --btn-bad: #b43f2a;
+    }
   }
   * { box-sizing: border-box; }
   body {
@@ -53,41 +63,66 @@
   }
 
   button {
+    min-height: 44px;
     padding: 10px 16px;
-    border: 0;
+    border: 1px solid transparent;
     border-radius: 9px;
-    background: var(--accent);
+    background: var(--btn);
     color: #fff;
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
   }
-  button.flat { background: transparent; border: 1px solid var(--line); color: inherit; }
+  button.flat { background: transparent; border-color: var(--line); color: inherit; }
+  button.danger { background: var(--btn-bad); color: #fff; }
   button[disabled] { opacity: .55; cursor: default; }
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .gap { flex: 1; }
 
   .said { margin: 8px 0 0; color: var(--muted); font-size: 13px; min-height: 1.4em; }
-  .bad { color: #c0462f; }
+  .bad { color: var(--bad); }
+  .ok { color: var(--ok); }
 
   /* ── the jobs ── */
-  ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
   li.job {
-    padding: 11px 13px;
+    padding: 12px 14px;
     border: 1px solid var(--line);
-    border-left: 3px solid var(--line);
+    border-left: 4px solid var(--line);
     border-radius: 0 10px 10px 0;
     background: var(--card);
   }
-  li.job[data-state="open"] { border-left-color: #2f9e6b; }
+  li.job[data-state="open"] { border-left-color: var(--ok); }
   li.job[data-state="closed"] { border-left-color: var(--muted); }
-  .job-top { display: flex; align-items: baseline; gap: 8px; }
-  .job-top strong { font-size: 14px; }
-  .job-top em { color: var(--muted); font-size: 12px; font-style: normal; }
-  .job-src { margin: 2px 0 7px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, monospace; }
-  .bar { height: 7px; border-radius: 999px; background: var(--line); overflow: hidden; }
+  .job-top { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; }
+  .job-top strong { font-size: 15px; }
+  .job-top .made { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .pill {
+    display: inline-block;
+    padding: 1px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .pill[data-tone="running"] { color: var(--ok); border-color: var(--ok); }
+  .pill[data-tone="blocked"] { color: var(--warn); border-color: var(--warn); }
+  .pill[data-tone="stopped"] { color: var(--bad); border-color: var(--bad); }
+  .pill[data-tone="complete"] { color: var(--accent); border-color: var(--accent); }
+  .job-src { margin: 3px 0 6px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, monospace; }
+  .job-line { margin: 2px 0; font-size: 12px; color: var(--muted); }
+  .job-line.warn { color: var(--warn); }
+
+  .meter { display: grid; grid-template-columns: 62px 1fr auto; align-items: center; gap: 8px; margin-top: 5px; font-size: 12px; color: var(--muted); }
+  .meter b { font-weight: 600; color: var(--ink); }
+  .bar { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
   .bar i { display: block; height: 100%; background: var(--accent); }
-  .job-foot { display: flex; gap: 8px; margin-top: 5px; color: var(--muted); font-size: 12px; }
+  .meter[data-kind="verified"] .bar i { background: var(--verified); }
+  .meter .figure { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .acts { margin-top: 10px; }
+  .ask { margin-top: 10px; padding: 10px; border: 1px solid var(--warn); border-radius: 9px; }
+  .ask p { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
 
   summary { cursor: pointer; font-weight: 600; font-size: 14px; }
   details[open] summary { margin-bottom: 10px; }
@@ -124,19 +159,7 @@
         <input id="url" placeholder="https://yourproject.supabase.co" autocomplete="off" inputmode="url"></label>
       <label><span>Anon key</span>
         <input id="anon" placeholder="eyJ… or sb_publishable_…" autocomplete="off"></label>
-      <label><span>Jobs table</span>
-        <input id="table" value="scrape_jobs" autocomplete="off"></label>
-
-      <p class="said" style="margin:14px 0 8px">The rest is for triggering the scraper from a push, which comes later. Leave it empty to just watch the jobs.</p>
-
-      <label><span>Alerts Worker URL</span>
-        <input id="worker" placeholder="https://test-alerts.makethemcall.workers.dev" autocomplete="off" inputmode="url"></label>
-      <label><span>Send key</span>
-        <input id="sendkey" type="password" placeholder="kept in this browser only" autocomplete="off"></label>
-      <div class="row" style="gap:12px">
-        <label style="flex:1"><span>Listener port</span><input id="port" value="8765" autocomplete="off" inputmode="numeric"></label>
-        <label style="flex:1"><span>Listener path</span><input id="path" value="/trigger" autocomplete="off"></label>
-      </div>
+      <p class="said" style="margin:6px 0 8px">Nothing else is needed to start and stop jobs: the alerts Worker's address and key are kept in the project, not in this page.</p>
       <div class="row"><button id="save-setup">Save</button></div>
       <p class="said" id="setup-said"></p>
     </div>
@@ -156,29 +179,27 @@
   <!-- ── the jobs ──────────────────────────────────────────────────── -->
   <section class="card hidden" id="jobs">
     <div class="row">
-      <button class="flat" id="back">&larr;</button>
+      <button class="flat" id="back" aria-label="Back">&larr;</button>
       <h2 style="margin:0">Jobs</h2>
       <span class="gap"></span>
       <button class="flat" id="refresh">Refresh</button>
     </div>
-    <p class="said" id="jobs-said"></p>
-
-    <h3 style="margin:14px 0 6px;font-size:13px">On the machines</h3>
-    <ul id="live"></ul>
-
-    <h3 style="margin:18px 0 6px;font-size:13px">In the pool</h3>
-    <ul id="list"></ul>
+    <p class="said" id="jobs-said" role="status"></p>
+    <p class="said" id="act-said" role="status"></p>
+    <ul id="list" aria-label="Jobs"></ul>
   </section>
 </main>
 
 <script>
 /* ============================================================
- *  Mobile Controller — a prototype.
+ *  Mobile Controller.
  *
- *  Sign in to the scraper's Supabase, then read the jobs table.
- *  Everything is the anon key plus a signed-in session, so what
- *  this can see is exactly what that account's row level
- *  security allows — this page grants nothing.
+ *  Sign in to the scraper's Supabase, then show its jobs the way the
+ *  planner's Jobs screen does (machine, job, source, state, status, how
+ *  far scraped and how far verified), and start, break and refresh them.
+ *  Everything is the anon key plus a signed-in session, so what this can
+ *  see is exactly what that account's row level security allows — this
+ *  page grants nothing.
  * ============================================================ */
 
 /*
@@ -196,18 +217,21 @@
 const SCRAPER = {
   url: "https://tqrowtgkszusuitjdbcw.supabase.co",
   anon: "sb_publishable_8rshOE9Zo_TnRtVoJzVJmg_jV_qfwMd",
-  table: "scrape_jobs",
 };
 
 const KEY = "mobile-controller:v1";
+const EVERY_MS = 10000;
 const $ = (id) => document.getElementById(id);
 
 const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
 const write = (next) => { try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {} };
 
 let state = { ...SCRAPER, ...read() };
-
 let where = "menu";
+let jobs = [];
+let busy = null;      // "machine|id" while a call is being sent
+let breaking = null;  // "machine|id" while "stop it now?" is asked
+let timer = 0;
 
 function show() {
   const ready = state.url && state.anon;
@@ -230,19 +254,16 @@ function show() {
   if (ready) {
     $("url").value = state.url || "";
     $("anon").value = state.anon || "";
-    $("table").value = state.table || "scrape_jobs";
-    $("worker").value = state.worker || "";
-    $("sendkey").value = state.sendKey || "";
-    $("port").value = state.port || "8765";
-    $("path").value = state.path || "/trigger";
   }
   if (inside) $("who-said").textContent = "Signed in as " + (state.who || "") + ".";
+  watch();
 }
 
-function say(where, text, bad) {
+function say(where, text, tone) {
   const el = $(where);
   el.textContent = text;
-  el.classList.toggle("bad", Boolean(bad));
+  el.classList.toggle("bad", tone === "bad");
+  el.classList.toggle("ok", tone === "ok");
 }
 
 /* ── connection ───────────────────────────────────────────────────── */
@@ -250,26 +271,16 @@ function say(where, text, bad) {
 $("save-setup").addEventListener("click", () => {
   const url = $("url").value.trim().replace(/\/$/, "");
   const anon = $("anon").value.trim();
-  const table = $("table").value.trim() || "scrape_jobs";
 
-  if (!/^https:\/\/.+/.test(url)) return say("setup-said", "That is not an https address.", true);
+  if (!/^https:\/\/.+/.test(url)) return say("setup-said", "That is not an https address.", "bad");
   // Said plainly: a service key here would be readable by anybody who
   // opens this page, and it bypasses every policy in the database.
   if (/^sb_secret_|service_role/.test(anon)) {
-    return say("setup-said", "That looks like a service key. Use the anon/publishable one — a service key in a page can be read by anybody.", true);
+    return say("setup-said", "That looks like a service key. Use the anon/publishable one — a service key in a page can be read by anybody.", "bad");
   }
-  if (!anon) return say("setup-said", "The anon key is missing.", true);
+  if (!anon) return say("setup-said", "The anon key is missing.", "bad");
 
-  state = {
-    ...state,
-    url,
-    anon,
-    table,
-    worker: $("worker").value.trim().replace(/\/$/, ""),
-    sendKey: $("sendkey").value.trim(),
-    port: $("port").value.trim() || "8765",
-    path: ($("path").value.trim() || "/trigger").replace(/^\/?/, "/"),
-  };
+  state = { ...state, url, anon };
   write(state);
   say("setup-said", "Saved. Sign in above.");
   show();
@@ -277,279 +288,280 @@ $("save-setup").addEventListener("click", () => {
 
 /* ── signing in ───────────────────────────────────────────────────── */
 
+async function token(body, grant) {
+  const response = await fetch(state.url + "/auth/v1/token?grant_type=" + grant, {
+    method: "POST",
+    headers: { apikey: state.anon, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const answer = await response.json().catch(() => ({}));
+  return { ok: response.ok && typeof answer.access_token === "string", answer };
+}
+
 $("go").addEventListener("click", async () => {
   const email = $("email").value.trim();
   const password = $("password").value;
-  if (!email || !password) return say("login-said", "Both are needed.", true);
+  if (!email || !password) return say("login-said", "Both are needed.", "bad");
 
   $("go").disabled = true;
   say("login-said", "Signing in…");
   try {
-    const response = await fetch(state.url + "/auth/v1/token?grant_type=password", {
-      method: "POST",
-      headers: { apikey: state.anon, "content-type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    const body = await response.json();
-    if (!response.ok) {
+    const got = await token({ email, password }, "password");
+    if (!got.ok) {
       // Never "no such user": whether an email exists is not this page's
       // to reveal.
-      return say("login-said", "That email and password do not match.", true);
+      return say("login-said", "That email and password do not match.", "bad");
     }
-    state = { ...state, token: body.access_token, who: email };
+    state = { ...state, token: got.answer.access_token, refresh: got.answer.refresh_token || "", who: email };
     write(state);
     say("login-said", "");
     show();
-    await load();
   } catch (error) {
-    say("login-said", "Could not reach that project: " + error.message, true);
+    say("login-said", "Could not reach that project: " + error.message, "bad");
   } finally {
     $("go").disabled = false;
   }
 });
 
-$("out").addEventListener("click", () => {
-  state = { ...state, token: "", who: "" };
+function signOut(message) {
+  state = { ...state, token: "", refresh: "", who: "" };
   write(state);
-  $("list").innerHTML = "";
+  jobs = [];
+  $("list").replaceChildren();
+  where = "menu";
   show();
-});
+  if (message) say("login-said", message, "bad");
+}
+
+$("out").addEventListener("click", () => signOut(""));
+
+/* A session lasts about an hour; a phone left open should not need a
+   password again for that, so the refresh token is used once first. */
+async function renew() {
+  if (!state.refresh) return false;
+  try {
+    const got = await token({ refresh_token: state.refresh }, "refresh_token");
+    if (!got.ok) return false;
+    state = { ...state, token: got.answer.access_token, refresh: got.answer.refresh_token || state.refresh };
+    write(state);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** One call to the project as the signed-in account. A refused session is renewed once; if that fails the page signs out. */
+async function api(path, init, again = true) {
+  const response = await fetch(state.url + path, {
+    ...init,
+    headers: {
+      apikey: state.anon,
+      authorization: "Bearer " + state.token,
+      ...((init && init.headers) || {}),
+    },
+  });
+  if (response.status === 401 && again && (await renew())) return api(path, init, false);
+  if (response.status === 401) {
+    signOut("That session has expired. Sign in again.");
+    throw new Error("The session has expired.");
+  }
+  return response;
+}
 
 /* ── the jobs ─────────────────────────────────────────────────────── */
 
-const pct = (done, of) => (of > 0 ? Math.round((done / of) * 100) : 0);
+const MACHINE = /^[A-Za-z][A-Za-z0-9_-]{0,19}$/;
+const TITLE_SOURCE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const keyOf = (job) => job.machine + "|" + job.id;
+const titleOf = (job) => "job--" + job.id + "--" + job.source;
 
-/* The column names are guessed from what the dashboard shows, and each
-   falls back rather than printing "undefined" at somebody. */
-const pick = (row, ...names) => {
-  for (const name of names) {
-    if (row[name] !== undefined && row[name] !== null && row[name] !== "") return row[name];
-  }
-  return "";
+/** "7/35" -> { done, total, percent }, or null. */
+function completion(value) {
+  const m = typeof value === "string" ? /^(\d{1,6})\/(\d{1,6})$/.exec(value.trim()) : null;
+  if (!m) return null;
+  const done = Number(m[1]);
+  const total = Number(m[2]);
+  if (done > total) return null;
+  return { done, total, percent: total === 0 ? 0 : Math.round((done / total) * 100) };
+}
+
+/** One entry of the list, checked; null when it is not a job. */
+function clean(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const id = item.id;
+  if (!MACHINE.test(String(item.machine)) || !Number.isSafeInteger(id) || id < 1) return null;
+  const text = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
+  return {
+    machine: String(item.machine),
+    id,
+    source: text(item.source, 200),
+    state: item.state === "open" ? "open" : "close",
+    status: text(item.status, 30) || "new",
+    scraped: completion(item.completion),
+    verified: completion(item.verified),
+    verifyStatus: text(item["verify-status"], 30),
+    note: text(item.note, 500),
+    made: text(item.datetime, 40),
+  };
+}
+
+const WORDS = {
+  new: ["New", "Made, not started yet."],
+  running: ["Running", "The scraper is working on it."],
+  paused: ["Paused", "Waiting to be started again."],
+  stopped: ["Stopped", "Stopped; start it again to go on."],
+  complete: ["Complete", "Every query is done."],
+  incomplete: ["Incomplete", "It ended before every query was done."],
+  break: ["Break", "It was asked to stop and the scraper has exited."],
+  killed: ["Killed", "The scraper's process ended before the job was done. Start it again to go on."],
+  blocked: ["Blocked (captcha)", "Google asked for a captcha. Solve it on the machine."],
+  capcha: ["Blocked (captcha)", "Google asked for a captcha. Solve it on the machine."],
 };
+const wordsOf = (status) => WORDS[status] || [status.charAt(0).toUpperCase() + status.slice(1), ""];
+const isBlocked = (status) => status === "blocked" || status === "capcha";
+const toneOf = (status) =>
+  status === "running" ? "running" :
+  isBlocked(status) ? "blocked" :
+  status === "break" || status === "killed" ? "stopped" :
+  status === "complete" ? "complete" : "";
 
 async function load() {
-  if (!state.token) return;
-  say("jobs-said", "Reading\u2026");
+  if (!state.token || where !== "jobs") return;
   try {
-    const head = { apikey: state.anon, authorization: "Bearer " + state.token };
-
-    /* Both, because neither answers the question alone: a job says what
-       it is doing, and a batch says how much of it there is. */
-    /* Two different things, and both are real.
-     *
-     * machine_jobs is what each machine says it is doing — the jobs the
-     * planner finds by SSH, reported outwards so something that is not
-     * on that network can see them. scrape_jobs is the pool machines
-     * pull from. A phone wants the first and is told about the second.
-     */
-    const [liveAt, seenAt, jobsAt, batchesAt] = await Promise.all([
-      fetch(state.url + "/rest/v1/machine_jobs?select=*&order=updated_at.desc&limit=200", { headers: head }),
-      fetch(state.url + "/rest/v1/machine_status?select=*&order=last_seen.desc&limit=50", { headers: head }),
-      fetch(state.url + "/rest/v1/" + (state.table || "scrape_jobs") +
-        "?select=id,batch_id,block,status,machine,count,claimed_at,finished_at,error&order=id.desc&limit=500", { headers: head }),
-      fetch(state.url + "/rest/v1/scrape_batches?select=id,label,phase,status,created_at&order=id.desc&limit=50", { headers: head }),
-    ]);
-
-    if (jobsAt.status === 401 || jobsAt.status === 403) {
-      state = { ...state, token: "" };
-      write(state);
-      show();
-      return say("login-said", "That session has expired. Sign in again.", true);
+    const response = await api("/rest/v1/rpc/job_list", { method: "GET" });
+    if (response.status === 404) {
+      return say("jobs-said", "The project has no list of jobs yet: run supabase/migrations/20261030150000_job_endpoints.sql in its SQL editor.", "bad");
     }
-    if (!jobsAt.ok) {
-      const body = await jobsAt.json().catch(() => ({}));
-      return say("jobs-said", (body && body.message) || ("The database answered " + jobsAt.status), true);
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      return say("jobs-said", (body && body.message) || ("The project answered " + response.status + "."), "bad");
     }
-
-    const jobs = await jobsAt.json();
-    const batches = batchesAt.ok ? await batchesAt.json() : [];
-    // 404 means the table is not there yet, which is a thing to say once
-    // rather than an error to show every time.
-    const live = liveAt.ok ? await liveAt.json() : [];
-    const seen = seenAt.ok ? await seenAt.json() : [];
-
-    drawLive(Array.isArray(live) ? live : [], Array.isArray(seen) ? seen : [], liveAt.status);
-    draw(Array.isArray(jobs) ? jobs : [], Array.isArray(batches) ? batches : []);
-
-    const running = (Array.isArray(live) ? live : []).filter((job) => job.status === "running").length;
-    say("jobs-said", running + " running on the machines \u00b7 " + jobs.length +
-      " in the pool \u00b7 read " + new Date().toLocaleTimeString());
+    const body = await response.json();
+    jobs = Array.isArray(body) ? body.slice(0, 5000).flatMap((item) => clean(item) || []) : [];
+    draw();
+    const running = jobs.filter((job) => job.status === "running").length;
+    const machines = new Set(jobs.map((job) => job.machine)).size;
+    say("jobs-said", jobs.length + (jobs.length === 1 ? " job" : " jobs") + " on " + machines +
+      (machines === 1 ? " machine" : " machines") + " · " + running + " running · read " +
+      new Date().toLocaleTimeString());
   } catch (error) {
-    say("jobs-said", "Could not read it: " + error.message, true);
+    if (state.token) say("jobs-said", "Could not read it: " + error.message, "bad");
   }
 }
 
-/**
- * What the machines say they are doing.
- *
- * Reported by each machine rather than found by looking, so a machine
- * that has stopped saying anything is its own kind of answer and is
- * shown as one — "nothing running" and "nobody has heard from mm2 since
- * Tuesday" are not the same news.
- */
-function drawLive(jobs, machines, status) {
-  const list = $("live");
-  list.innerHTML = "";
-
-  if (status === 404) {
-    const none = document.createElement("li");
-    none.className = "job";
-    none.textContent = "The machines are not reporting yet — machine_jobs does not exist on this project.";
-    list.append(none);
-    return;
-  }
-
-  const old = Date.now() - 10 * 60 * 1000;
-  for (const machine of machines) {
-    const quiet = new Date(machine.last_seen).getTime() < old;
-    const li = document.createElement("li");
-    li.className = "job";
-    li.dataset.state = quiet ? "closed" : "open";
-
-    const top = document.createElement("div");
-    top.className = "job-top";
-    const name = document.createElement("strong");
-    name.textContent = machine.machine;
-    const when = document.createElement("em");
-    when.textContent = quiet
-      ? "last heard " + new Date(machine.last_seen).toLocaleString()
-      : machine.jobs + (machine.jobs === 1 ? " job" : " jobs");
-    top.append(name, when);
-    li.append(top);
-
-    if (machine.note) {
-      const note = document.createElement("p");
-      note.className = "job-src";
-      note.textContent = machine.note;
-      li.append(note);
-    }
-
-    for (const job of jobs.filter((one) => one.machine === machine.machine)) {
-      const line = document.createElement("div");
-      line.style.marginTop = "8px";
-
-      const head = document.createElement("div");
-      head.className = "job-top";
-      const id = document.createElement("strong");
-      id.textContent = job.job;
-      const how = document.createElement("em");
-      how.textContent = job.status + (job.note ? " \u00b7 " + job.note : "");
-      head.append(id, how);
-
-      const src = document.createElement("p");
-      src.className = "job-src";
-      src.textContent = job.source || "";
-
-      const bar = document.createElement("div");
-      bar.className = "bar";
-      const fill = document.createElement("i");
-      fill.style.width = (job.total ? Math.round((job.done / job.total) * 100) : 0) + "%";
-      bar.append(fill);
-
-      const foot = document.createElement("div");
-      foot.className = "job-foot";
-      const count = document.createElement("span");
-      count.textContent = job.done + "/" + job.total +
-        (job.total ? " \u00b7 " + Math.round((job.done / job.total) * 100) + "%" : "");
-      foot.append(count);
-
-      line.append(head, src, bar, foot);
-      li.append(line);
-    }
-
-    list.append(li);
-  }
-
-  if (machines.length === 0 && jobs.length === 0 && status !== 404) {
-    const none = document.createElement("li");
-    none.className = "job";
-    none.textContent = "No machine has reported in yet.";
-    list.append(none);
-  }
+function element(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
 }
 
-function draw(jobs, batches) {
+function meter(kind, label, value, subject) {
+  const row = element("div", "meter");
+  row.dataset.kind = kind;
+  row.append(element("b", "", label));
+  const bar = element("div", "bar");
+  bar.setAttribute("role", "img");
+  bar.setAttribute("aria-label", label + " " + (value ? value.done + " of " + value.total + " queries" : "not known") + " for " + subject);
+  const fill = element("i");
+  fill.style.width = (value ? value.percent : 0) + "%";
+  bar.append(fill);
+  row.append(bar, element("span", "figure", value ? value.done + "/" + value.total + " · " + value.percent + "%" : "—"));
+  return row;
+}
+
+function button(label, className, onClick, aria) {
+  const b = element("button", className, label);
+  b.type = "button";
+  b.setAttribute("aria-label", aria || label);
+  b.disabled = busy !== null;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function draw() {
   const list = $("list");
-  list.innerHTML = "";
+  list.replaceChildren();
 
   if (jobs.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "job";
-    empty.textContent = "No jobs in the pool right now.";
-    list.append(empty);
+    list.append(element("li", "job", "No job is in the project yet."));
     return;
   }
 
-  /* A batch is the unit somebody thinks in — "the Washington run" — and
-     a job is one block of it. So the batch is the row, with how far
-     through it is, and the jobs actually moving are named underneath. */
-  const named = new Map(batches.map((batch) => [batch.id, batch]));
-  const byBatch = new Map();
   for (const job of jobs) {
-    const bucket = byBatch.get(job.batch_id) || [];
-    bucket.push(job);
-    byBatch.set(job.batch_id, bucket);
-  }
+    const subject = "job " + job.id + " on " + job.machine;
+    const [label, meaning] = wordsOf(job.status);
+    const li = element("li", "job");
+    li.dataset.state = job.state === "open" ? "open" : "closed";
+    li.dataset.machine = job.machine;
+    li.dataset.jobId = String(job.id);
+    li.dataset.status = job.status;
 
-  for (const [id, mine] of byBatch) {
-    const batch = named.get(id) || {};
-    const done = mine.filter((job) => job.status === "done").length;
-    const running = mine.filter((job) => job.status === "running");
-    const failed = mine.filter((job) => job.status === "failed").length;
-
-    const li = document.createElement("li");
-    li.className = "job";
-    li.dataset.state = batch.status === "cancelled" ? "closed" : running.length ? "open" : "closed";
-
-    const top = document.createElement("div");
-    top.className = "job-top";
-    const name = document.createElement("strong");
-    name.textContent = batch.label || ("Batch " + id);
-    const phase = document.createElement("em");
-    phase.textContent = (batch.phase || "") + (batch.status === "cancelled" ? " \u00b7 cancelled" : "");
-    top.append(name, phase);
-
-    const bar = document.createElement("div");
-    bar.className = "bar";
-    const fill = document.createElement("i");
-    fill.style.width = (mine.length ? Math.round((done / mine.length) * 100) : 0) + "%";
-    bar.append(fill);
-
-    const foot = document.createElement("div");
-    foot.className = "job-foot";
-    const where = document.createElement("span");
-    where.textContent = done + "/" + mine.length + " done";
-    const how = document.createElement("span");
-    how.textContent = running.length + " running" + (failed ? " \u00b7 " + failed + " failed" : "");
-    foot.append(where, how);
-
-    li.append(top, bar, foot);
-
-    // The ones actually moving, with the machine doing them.
-    for (const job of running.slice(0, 8)) {
-      const line = document.createElement("p");
-      line.className = "job-src";
-      line.textContent = (job.machine || "unclaimed") + " \u00b7 " + (job.block || job.id) +
-        (job.count ? " \u00b7 " + job.count + " rows" : "");
-      li.append(line);
+    const top = element("div", "job-top");
+    top.append(element("strong", "", job.machine + " · job " + job.id));
+    const pill = element("span", "pill", label);
+    pill.dataset.tone = toneOf(job.status);
+    pill.title = meaning;
+    top.append(pill);
+    if (job.made) {
+      const when = new Date(job.made);
+      if (!Number.isNaN(when.getTime())) {
+        top.append(element("span", "made", when.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })));
+      }
     }
+    li.append(top, element("p", "job-src", job.source));
 
-    /* Test buttons: these send a push, so the machine beside the scraper
-       does the work. Wired to the batch, which is what somebody actually
-       wants to stop. */
-    const acts = document.createElement("div");
-    acts.className = "row";
-    acts.style.marginTop = "8px";
-    for (const verb of ["resume", "pause"]) {
-      const button = document.createElement("button");
-      button.className = verb === "resume" ? "" : "flat";
-      button.textContent = verb === "resume" ? "Start" : "Break";
-      button.addEventListener("click", () => void trigger(verb, String(id)));
-      acts.append(button);
+    const running = job.status === "running";
+    // (a job whose verify pass is going is open on purpose)
+    const verifying = job.verifyStatus === "running" || job.verifyStatus === "blocked";
+    const closedByError = job.state === "open" && !running && !isBlocked(job.status) && !verifying;
+    li.append(element("p", "job-line", "State: " + (job.state === "open" ? "open" : "closed")));
+    if (closedByError) li.append(element("p", "job-line warn", "Left open: closed by error?"));
+    if (job.note) li.append(element("p", "job-line warn", job.note));
+    if (job.verifyStatus) li.append(element("p", "job-line", "Verify: " + job.verifyStatus));
+
+    li.append(meter("scraped", "Scraped", job.scraped, subject), meter("verified", "Verified", job.verified, subject));
+
+    // What can be done, as the planner's Jobs screen has it.
+    const canTitle = TITLE_SOURCE.test(job.source);
+    const acts = element("div", "row acts");
+    if (!canTitle) {
+      li.append(element("p", "job-line warn", "This job's source has a form the buttons cannot name."));
+    } else if (breaking === keyOf(job)) {
+      const ask = element("div", "ask");
+      ask.setAttribute("role", "alertdialog");
+      ask.setAttribute("aria-label", "Stop " + subject);
+      ask.append(element("p", "", "Stop it now?"));
+      const choices = element("div", "row");
+      choices.append(
+        button("Yes, break it", "danger", () => { breaking = null; void send(job, "break-job"); }, "Yes, break " + subject),
+        button("Keep it running", "flat", () => { breaking = null; draw(); }),
+      );
+      ask.append(choices);
+      li.append(ask);
+    } else {
+      if (!running && !isBlocked(job.status) && job.status !== "complete") {
+        acts.append(button("Start", "", () => void send(job, "start-job"), "Start " + subject));
+      }
+      if (running) {
+        acts.append(button("Break", "danger", () => { breaking = keyOf(job); draw(); }, "Break " + subject));
+      }
+      if (job.state === "open" || running) {
+        acts.append(button("Refresh status", "flat", () => void send(job, "refresh-job"), "Refresh status of " + subject));
+      }
+      if (job.verifyStatus === "running" || job.verifyStatus === "blocked") {
+        acts.append(
+          button("Break verify", "flat", () => void send(job, "break-verify"), "Break verify of " + subject),
+          button("Refresh verify", "flat", () => void send(job, "refresh-verify"), "Refresh verify of " + subject),
+        );
+      } else if (job.status === "complete" && (!job.verified || job.verified.done !== job.verified.total)) {
+        acts.append(button("Verify", "flat", () => void send(job, "start-verify"), "Verify " + subject));
+      }
+      if (isBlocked(job.status)) {
+        li.append(element("p", "job-line warn", "Waiting for a captcha: solve it on the machine."));
+      }
+      if (acts.childNodes.length > 0) li.append(acts);
     }
-    li.append(acts);
-
     list.append(li);
   }
 }
@@ -558,56 +570,98 @@ $("refresh").addEventListener("click", () => void load());
 $("open-jobs").addEventListener("click", () => { where = "jobs"; show(); void load(); });
 $("back").addEventListener("click", () => { where = "menu"; show(); });
 
+/* The list is read again every ten seconds while it is on screen. */
+function watch() {
+  window.clearInterval(timer);
+  if (state.token && where === "jobs") {
+    timer = window.setInterval(() => { if (document.visibilityState === "visible" && busy === null) void load(); }, EVERY_MS);
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && where === "jobs") void load();
+});
+
 /* ── making something happen on a machine somewhere else ──────────────
  *
- * The button does not reach the scraper. It sends a push, and the
- * service worker on whichever machine receives it POSTs to the listener
- * running there — which is the whole point: the phone is not on that
- * network, and the machine is.
+ * The button does not reach the scraper. It asks the project's "push"
+ * function (which holds the alerts Worker's address and send key as its
+ * secrets, so neither is in this page or on this phone), and the Worker
+ * pushes the call to the device named for that machine. That machine's
+ * service worker POSTs it to the listener running there. The phone is not
+ * on that network; the machine is.
  *
- * So what travels is a notification carrying the instruction, and the
- * device nearest the scraper carries it out.
+ * The device is found the way the planner finds it: the PWA's register,
+ * the device whose name is the machine's ("MM1").
  */
-async function trigger(verb, job) {
-  if (!state.worker || !state.sendKey) {
-    return say("jobs-said", "No alerts Worker is set, so there is nothing to send through. Change connection.", true);
+const ACTION_WORDS = {
+  "start-job": ["start", "The start"],
+  "break-job": ["break", "The break"],
+  "refresh-job": ["refresh", "The refresh"],
+  "start-verify": ["start of the verify", "The start of the verify"],
+  "break-verify": ["break of the verify", "The break of the verify"],
+  "refresh-verify": ["refresh of the verify", "The refresh of the verify"],
+};
+
+async function deviceOf(machine) {
+  const response = await fetch(
+    state.url + "/rest/v1/pwa_subscribers?gone_at=is.null&select=sub_id,label&order=at.desc&limit=500",
+    { headers: { apikey: state.anon } },
+  );
+  if (!response.ok) {
+    throw new Error(response.status === 404
+      ? "The PWA's list of devices is not in the project."
+      : "The list of devices could not be read (" + response.status + ").");
   }
-  say("jobs-said", verb + " " + job + "…");
+  const rows = await response.json();
+  const wanted = machine.toLowerCase();
+  const found = (Array.isArray(rows) ? rows : []).find((row) =>
+    row && typeof row.sub_id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(row.sub_id) &&
+    typeof row.label === "string" && row.label.trim().toLowerCase() === wanted);
+  if (!found) {
+    throw new Error("No device is named " + machine.toUpperCase() + " in the PWA (open its Users list, choose the machine's device and press \"Name it\").");
+  }
+  return found.sub_id;
+}
+
+async function send(job, action) {
+  if (busy !== null) return;
+  const [what, said] = ACTION_WORDS[action];
+  busy = keyOf(job);
+  draw();
+  say("act-said", said + " is being sent to " + job.machine + "…");
   try {
-    const response = await fetch(state.worker + "/send", {
+    const device = await deviceOf(job.machine);
+    const response = await api("/functions/v1/push", {
       method: "POST",
-      headers: { authorization: "Bearer " + state.sendKey, "content-type": "application/json" },
-      body: JSON.stringify({
-        title: verb + " job " + job,
-        body: "Sent from the mobile controller.",
-        url: "/",
-        post: {
-          port: state.port || "8765",
-          path: state.path || "/trigger",
-          // The shape asked for: a list of actions, each naming its job.
-          // A list rather than one, because stopping three jobs is one
-          // message rather than three.
-          body: [{ action: verb, id: String(job) }],
-        },
-      }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ machine: job.machine, job: titleOf(job), only: [device], action }),
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return say("jobs-said", response.status === 401
-        ? "The Worker refused that send key."
-        : (body.error || ("The Worker answered " + response.status)), true);
+    if (response.status === 404 && (body.code === "NOT_FOUND" || !body.error)) {
+      throw new Error('The "push" function is not deployed in the project yet.');
     }
-    say("jobs-said", "Sent to " + (body.sent ?? 0) + (body.sent === 1 ? " device" : " devices") +
-      ". The one running the listener will act on it.");
+    if (response.status === 403) {
+      throw new Error("This account may not send pushes: sign in as the scraper account.");
+    }
+    if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "The project answered " + response.status + ".");
+    const sent = Number(body.sent) || 0;
+    const failed = Number(body.failed) || 0;
+    if (sent < 1 || failed > 0) {
+      throw new Error("The " + what + " did not reach " + job.machine + "'s device: sent " + sent + ", failed " + failed + ". It was not sent another way.");
+    }
+    say("act-said", said + " was sent to " + job.machine + "'s device by push; the job's status follows below.", "ok");
+    window.setTimeout(() => void load(), 4000);
   } catch (error) {
-    say("jobs-said", "Could not reach the Worker: " + error.message, true);
+    say("act-said", "The " + what + " could not be sent: " + error.message, "bad");
+  } finally {
+    busy = null;
+    draw();
   }
 }
 
 /* ── start ────────────────────────────────────────────────────────── */
 
 show();
-if (state.token) void load();
 </script>
 </body>
 </html>
