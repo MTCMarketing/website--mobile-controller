@@ -76,6 +76,15 @@
   button.flat { background: transparent; border-color: var(--line); color: inherit; }
   button.danger { background: var(--btn-bad); color: #fff; }
   button[disabled] { opacity: .55; cursor: default; }
+  select.parts {
+    min-height: 44px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--card);
+    color: inherit;
+    font: inherit;
+  }
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .gap { flex: 1; }
 
@@ -435,6 +444,35 @@ const toneOf = (status) =>
   isBlocked(status) ? "blocked" :
   status === "break" || status === "killed" ? "stopped" :
   status === "complete" ? "complete" : "";
+// The scrape and the verify each have their status (Nate, Nov 2, SPT-059), as on the planner's Jobs screen; running is "Scraping" or "Verifying" (SPT-064).
+const allDone = (c) => !!c && c.total > 0 && c.done === c.total;
+const isVerifying = (job) => job.verifyStatus === "running" || job.verifyStatus === "blocked" || job.verifyStatus === "capcha";
+/** A job whose every query is scraped is complete as a scrape, whatever stopped its process after (SPT-061); its own status is said too. */
+function scrapeWords(job) {
+  const [label, meaning] = wordsOf(job.status);
+  if (allDone(job.scraped) && job.status !== "complete" && job.status !== "running" && !isBlocked(job.status)) {
+    return ["Complete", "Every query is scraped. The job's status says \"" + label + "\", which is about the process that last ran it.", "complete"];
+  }
+  return [job.status === "running" ? "Scraping" : label, meaning, toneOf(job.status)];
+}
+/** What the machine wrote for the verify, or what its count says; nothing made up. */
+function verifyWords(job) {
+  const said = job.verifyStatus.toLowerCase();
+  if (said) return [said === "running" ? "Verifying" : wordsOf(said)[0], "The verify's status, as the machine wrote it.", toneOf(said)];
+  const v = job.verified;
+  if (!v) return ["Not reported", "The machine's list of jobs does not say how far the verify is.", ""];
+  if (allDone(v)) return ["Complete", "Every query is verified.", "complete"];
+  if (v.done === 0) return ["Not started", "No query is verified yet.", ""];
+  return ["Incomplete", v.done + " of " + v.total + " queries are verified.", ""];
+}
+/** Start: nothing running, and something left to scrape (SPT-061). */
+const canStart = (job) => job.status !== "running" && !isBlocked(job.status) && job.status !== "complete" && !allDone(job.scraped);
+/** Verify: one query scraped is enough (SPT-062), not while the scrape runs, not twice, not when all is verified. */
+const canVerify = (job) =>
+  !!job.scraped && job.scraped.done >= 1 && job.status !== "running" && !isBlocked(job.status) && !isVerifying(job) && !allDone(job.verified);
+/** Refresh of each pass (SPT-063): the scrape's when its job is open or running, the verify's when the verify was ever started. */
+const canRefreshScrape = (job) => job.state === "open" || job.status === "running";
+const canRefreshVerify = (job) => isVerifying(job) || job.verifyStatus !== "" || (!!job.verified && job.verified.done > 0);
 
 async function load() {
   if (!state.token || where !== "jobs") return;
@@ -501,7 +539,8 @@ function draw() {
 
   for (const job of jobs) {
     const subject = "job " + job.id + " on " + job.machine;
-    const [label, meaning] = wordsOf(job.status);
+    const [label, meaning, tone] = scrapeWords(job);
+    const [vLabel, vMeaning, vTone] = verifyWords(job);
     const li = element("li", "job");
     li.dataset.state = job.state === "open" ? "open" : "closed";
     li.dataset.machine = job.machine;
@@ -510,10 +549,15 @@ function draw() {
 
     const top = element("div", "job-top");
     top.append(element("strong", "", job.machine + " · job " + job.id));
-    const pill = element("span", "pill", label);
-    pill.dataset.tone = toneOf(job.status);
+    const pill = element("span", "pill", "Scrape: " + label);
+    pill.dataset.tone = tone;
+    pill.dataset.pass = "scrape";
     pill.title = meaning;
-    top.append(pill);
+    const vPill = element("span", "pill", "Verify: " + vLabel);
+    vPill.dataset.tone = vTone;
+    vPill.dataset.pass = "verify";
+    vPill.title = vMeaning;
+    top.append(pill, vPill);
     if (job.made) {
       const when = new Date(job.made);
       if (!Number.isNaN(when.getTime())) {
@@ -524,12 +568,10 @@ function draw() {
 
     const running = job.status === "running";
     // (a job whose verify pass is going is open on purpose)
-    const verifying = job.verifyStatus === "running" || job.verifyStatus === "blocked";
-    const closedByError = job.state === "open" && !running && !isBlocked(job.status) && !verifying;
+    const closedByError = job.state === "open" && !running && !isBlocked(job.status) && !isVerifying(job);
     li.append(element("p", "job-line", "State: " + (job.state === "open" ? "open" : "closed")));
     if (closedByError) li.append(element("p", "job-line warn", "Left open: closed by error?"));
     if (job.note) li.append(element("p", "job-line warn", job.note));
-    if (job.verifyStatus) li.append(element("p", "job-line", "Verify: " + job.verifyStatus));
 
     li.append(meter("scraped", "Scraped", job.scraped, subject), meter("verified", "Verified", job.verified, subject));
 
@@ -551,22 +593,41 @@ function draw() {
       ask.append(choices);
       li.append(ask);
     } else {
-      if (!running && !isBlocked(job.status) && job.status !== "complete") {
-        acts.append(button("Start", "", () => void send(job, "start-job"), "Start " + subject));
+      if (canStart(job)) {
+        // a broken job is resumed by the same start-job (SPT-066): the word says which
+        const verb = job.status === "break" ? "Resume" : "Start";
+        acts.append(button(verb, "", () => void send(job, "start-job"), verb + " " + subject));
       }
       if (running) {
         acts.append(button("Break", "danger", () => { breaking = keyOf(job); draw(); }, "Break " + subject));
       }
-      if (job.state === "open" || running) {
-        acts.append(button("Refresh status", "flat", () => void send(job, "refresh-job"), "Refresh status of " + subject));
+      if (canRefreshScrape(job)) {
+        acts.append(button("Refresh scrape", "flat", () => void send(job, "refresh-job"), "Refresh scrape of " + subject));
       }
-      if (job.verifyStatus === "running" || job.verifyStatus === "blocked") {
+      if (isVerifying(job)) {
+        acts.append(button("Break verify", "flat", () => void send(job, "break-verify"), "Break verify of " + subject));
+      } else if (canVerify(job)) {
+        // a verify can run in parts at once (SPT-071); the choice is kept on this phone, and 1 part sends no split
+        const parts = element("select", "parts");
+        parts.setAttribute("aria-label", "Verify " + subject + " in how many parts at once");
+        for (const n of PART_CHOICES) {
+          const option = element("option", "", n === 1 ? "1 part" : n + " parts");
+          option.value = String(n);
+          parts.append(option);
+        }
+        parts.value = String(verifyParts());
+        parts.disabled = busy !== null;
+        parts.addEventListener("change", () => {
+          state = { ...state, parts: Number(parts.value) };
+          write(state);
+        });
         acts.append(
-          button("Break verify", "flat", () => void send(job, "break-verify"), "Break verify of " + subject),
-          button("Refresh verify", "flat", () => void send(job, "refresh-verify"), "Refresh verify of " + subject),
+          button("Verify", "flat", () => void send(job, "start-verify", verifyParts()), "Verify " + subject),
+          parts,
         );
-      } else if (job.status === "complete" && (!job.verified || job.verified.done !== job.verified.total)) {
-        acts.append(button("Verify", "flat", () => void send(job, "start-verify"), "Verify " + subject));
+      }
+      if (canRefreshVerify(job)) {
+        acts.append(button("Refresh verify", "flat", () => void send(job, "refresh-verify"), "Refresh verify of " + subject));
       }
       if (isBlocked(job.status)) {
         li.append(element("p", "job-line warn", "Waiting for a captcha: solve it on the machine."));
@@ -635,7 +696,11 @@ async function deviceOf(machine) {
   return found.sub_id;
 }
 
-async function send(job, action) {
+/** How many parts a verify runs in (SPT-071): the push function takes 1 to 16. */
+const PART_CHOICES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16];
+const verifyParts = () => (PART_CHOICES.includes(state.parts) ? state.parts : 1);
+
+async function send(job, action, split) {
   if (busy !== null) return;
   const [what, said] = ACTION_WORDS[action];
   busy = keyOf(job);
@@ -646,7 +711,10 @@ async function send(job, action) {
     const response = await api("/functions/v1/push", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ machine: job.machine, job: titleOf(job), only: [device], action }),
+      body: JSON.stringify({
+        machine: job.machine, job: titleOf(job), only: [device], action,
+        ...(action === "start-verify" && split > 1 ? { split } : {}),
+      }),
     });
     const body = await response.json().catch(() => ({}));
     if (response.status === 404 && (body.code === "NOT_FOUND" || !body.error)) {
@@ -661,7 +729,8 @@ async function send(job, action) {
     if (sent < 1 || failed > 0) {
       throw new Error("The " + what + " did not reach " + job.machine + "'s device: sent " + sent + ", failed " + failed + ". It was not sent another way.");
     }
-    say("act-said", said + " was sent to " + job.machine + "'s device by push; the job's status follows below.", "ok");
+    const inParts = action === "start-verify" && split > 1 ? " in " + split + " parts" : "";
+    say("act-said", said + inParts + " was sent to " + job.machine + "'s device by push; the job's status follows below.", "ok");
     window.setTimeout(() => void load(), 4000);
   } catch (error) {
     say("act-said", "The " + what + " could not be sent: " + error.message, "bad");
