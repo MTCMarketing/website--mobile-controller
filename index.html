@@ -76,6 +76,9 @@
   button.flat { background: transparent; border-color: var(--line); color: inherit; }
   button.danger { background: var(--btn-bad); color: #fff; }
   button[disabled] { opacity: .55; cursor: default; }
+  label.check { display: flex; align-items: center; gap: 8px; min-height: 44px; margin: 6px 0; }
+  label.check input { width: 22px; height: 22px; margin: 0; padding: 0; }
+  label.check small { color: var(--muted); }
   select.parts {
     min-height: 44px;
     padding: 8px 10px;
@@ -193,6 +196,8 @@
       <span class="gap"></span>
       <button class="flat" id="refresh">Refresh</button>
     </div>
+    <!-- job settings (SPT-074): what a start and a verify sent from here carry -->
+    <label class="check"><input type="checkbox" id="exclude208"> Exclude (208) phone numbers <small>(uncheck only for Idaho)</small></label>
     <p class="said" id="jobs-said" role="status"></p>
     <p class="said" id="act-said" role="status"></p>
     <ul id="list" aria-label="Jobs"></ul>
@@ -696,6 +701,14 @@ async function deviceOf(machine) {
   return found.sub_id;
 }
 
+/** Exclude (208) phone numbers (SPT-074): on unless it was turned off on this phone; a start and a verify then leave out those results. */
+const exclude208 = () => state.exclude208 !== false;
+$("exclude208").checked = exclude208();
+$("exclude208").addEventListener("change", () => {
+  state = { ...state, exclude208: $("exclude208").checked };
+  write(state);
+});
+
 /** How many parts a verify runs in (SPT-071): the push function takes 1 to 16. */
 const PART_CHOICES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16];
 const verifyParts = () => (PART_CHOICES.includes(state.parts) ? state.parts : 1);
@@ -714,6 +727,7 @@ async function send(job, action, split) {
       body: JSON.stringify({
         machine: job.machine, job: titleOf(job), only: [device], action,
         ...(action === "start-verify" && split > 1 ? { split } : {}),
+        ...((action === "start-job" || action === "start-verify") && exclude208() ? { excludeAreaCode: "208" } : {}),
       }),
     });
     const body = await response.json().catch(() => ({}));
