@@ -214,7 +214,7 @@
       <button class="flat" id="refresh">Refresh</button>
     </div>
     <!-- job settings (SPT-074): what a start and a verify sent from here carry -->
-    <label class="check"><input type="checkbox" id="exclude208"> Exclude (208) phone numbers <small>(uncheck only for Idaho)</small></label>
+    <label class="check"><input type="checkbox" id="exclude208"> Exclude (208) phone numbers <small>(never for a job in Idaho)</small></label>
     <label class="check"><input type="checkbox" id="noWebsite"> Verify only businesses without a website <small>(much faster)</small></label>
     <p class="said" id="jobs-said" role="status"></p>
     <p class="said" id="act-said" role="status"></p>
@@ -293,6 +293,8 @@ let archivedJobs = null;
 let onlyPending = false;   // SPT-091: the jobs made and not started yet
 let progress = [];         // SPT-090: where the ingesting of each job's data has got to
 let progressTimer = 0;
+// the state each job's square is in, as the planner stamped it (SPT-073): the (208) numbers are never left out of a job in Idaho (Nate, Nov 3)
+let jobStates = new Map();
 let timer = 0;
 
 function show() {
@@ -595,6 +597,7 @@ async function load() {
     jobs = Array.isArray(body) ? body.slice(0, 5000).flatMap((item) => clean(item) || []) : [];
     draw();
     void loadProgress();
+    void loadStates();
     const running = jobs.filter((job) => job.status === "running").length;
     const machines = new Set(jobs.map((job) => job.machine)).size;
     say("jobs-said", jobs.length + (jobs.length === 1 ? " job" : " jobs") + " on " + machines +
@@ -896,7 +899,7 @@ async function send(job, action, split) {
       body: JSON.stringify({
         machine: job.machine, job: titleOf(job), only: [device], action,
         ...(action === "start-verify" && split > 1 ? { split } : {}),
-        ...((action === "start-job" || action === "start-verify") && exclude208() ? { excludeAreaCode: "208" } : {}),
+        ...((action === "start-job" || action === "start-verify") && exclude208() && !inIdaho(job) ? { excludeAreaCode: "208" } : {}),
         ...(action === "start-verify" && verifyNoWebsite() ? { onlyWithoutWebsite: true } : {}),
       }),
     });
@@ -1093,6 +1096,19 @@ function more(job, subject) {
   }
   return box;
 }
+
+/** The state of each job's square (postal code), where the planner stamped it; a job without one is left to the setting. */
+async function loadStates() {
+  try {
+    const rows = await rest("GET", "/jobs?select=machine,id,source,square_state&square_state=not.is.null&limit=5000");
+    jobStates = new Map((Array.isArray(rows) ? rows : []).flatMap((r) =>
+      r && typeof r.square_state === "string" && MACHINE.test(String(r.machine)) && Number.isSafeInteger(r.id) && typeof r.source === "string"
+        ? [[r.machine + "|" + r.id + "|" + r.source, r.square_state]] : []));
+  } catch {
+    /* not read: the setting decides */
+  }
+}
+const inIdaho = (job) => jobStates.get(job.machine + "|" + job.id + "|" + job.source) === "ID";
 
 /* ── the ingest phase and progress (SPT-090) ──────────────────────────── */
 
