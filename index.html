@@ -198,6 +198,7 @@
     </div>
     <!-- job settings (SPT-074): what a start and a verify sent from here carry -->
     <label class="check"><input type="checkbox" id="exclude208"> Exclude (208) phone numbers <small>(uncheck only for Idaho)</small></label>
+    <label class="check"><input type="checkbox" id="noWebsite"> Verify only businesses without a website <small>(much faster)</small></label>
     <p class="said" id="jobs-said" role="status"></p>
     <p class="said" id="act-said" role="status"></p>
     <ul id="list" aria-label="Jobs"></ul>
@@ -708,6 +709,13 @@ $("exclude208").addEventListener("change", () => {
   state = { ...state, exclude208: $("exclude208").checked };
   write(state);
 });
+/** Verify only businesses without a website (SPT-077): on unless it was turned off on this phone; only a verify carries it. */
+const verifyNoWebsite = () => state.verifyNoWebsite !== false;
+$("noWebsite").checked = verifyNoWebsite();
+$("noWebsite").addEventListener("change", () => {
+  state = { ...state, verifyNoWebsite: $("noWebsite").checked };
+  write(state);
+});
 
 /** How many parts a verify runs in (SPT-071): the push function takes 1 to 16. */
 const PART_CHOICES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16];
@@ -728,6 +736,7 @@ async function send(job, action, split) {
         machine: job.machine, job: titleOf(job), only: [device], action,
         ...(action === "start-verify" && split > 1 ? { split } : {}),
         ...((action === "start-job" || action === "start-verify") && exclude208() ? { excludeAreaCode: "208" } : {}),
+        ...(action === "start-verify" && verifyNoWebsite() ? { onlyWithoutWebsite: true } : {}),
       }),
     });
     const body = await response.json().catch(() => ({}));
