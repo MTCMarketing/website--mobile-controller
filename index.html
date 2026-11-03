@@ -148,6 +148,12 @@
   .ingest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 6px 0; font-size: 13px; }
   .ingest b { min-width: 104px; font-weight: 600; }
 
+  .progress { margin: 4px 0 8px; padding: 8px 10px; border-radius: 9px; background: var(--bg); font-size: 12px; }
+  .progress .bar { margin: 4px 0; }
+  .progress code { display: block; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+  .job-line.live { color: var(--accent); }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
   .hidden { display: none; }
 </style>
 </head>
@@ -203,6 +209,7 @@
       <button class="flat" id="back" aria-label="Back">&larr;</button>
       <h2 style="margin:0">Jobs</h2>
       <span class="gap"></span>
+      <button class="flat" id="pending" aria-pressed="false">Pending</button>
       <button class="flat" id="open-archive">Archived</button>
       <button class="flat" id="refresh">Refresh</button>
     </div>
@@ -283,6 +290,9 @@ let redoing = null;   // "machine|id" while "redo the scrape?" is asked (SPT-083
 const opened = new Set();        // the jobs whose More is open, kept over the list's redraws
 const queriesOf = new Map();     // "machine|id" -> the job's queries, read when its More is opened
 let archivedJobs = null;
+let onlyPending = false;   // SPT-091: the jobs made and not started yet
+let progress = [];         // SPT-090: where the ingesting of each job's data has got to
+let progressTimer = 0;
 let timer = 0;
 
 function show() {
@@ -584,6 +594,7 @@ async function load() {
     const body = await response.json();
     jobs = Array.isArray(body) ? body.slice(0, 5000).flatMap((item) => clean(item) || []) : [];
     draw();
+    void loadProgress();
     const running = jobs.filter((job) => job.status === "running").length;
     const machines = new Set(jobs.map((job) => job.machine)).size;
     say("jobs-said", jobs.length + (jobs.length === 1 ? " job" : " jobs") + " on " + machines +
@@ -628,12 +639,16 @@ function draw() {
   const list = $("list");
   list.replaceChildren();
 
-  if (jobs.length === 0) {
-    list.append(element("li", "job", "No job is in the project yet."));
+  const pendingJobs = jobs.filter(canMove);
+  $("pending").textContent = onlyPending ? "All jobs" : "Pending (" + pendingJobs.length + ")";
+  $("pending").setAttribute("aria-pressed", onlyPending ? "true" : "false");
+  const shown = onlyPending ? pendingJobs : jobs;
+  if (shown.length === 0) {
+    list.append(element("li", "job", onlyPending ? "No job is waiting to start." : "No job is in the project yet."));
     return;
   }
 
-  for (const job of jobs) {
+  for (const job of shown) {
     const subject = "job " + job.id + " on " + job.machine;
     const [label, meaning, tone] = scrapeWords(job);
     const [vLabel, vMeaning, vTone] = verifyWords(job);
@@ -673,6 +688,9 @@ function draw() {
     li.append(meter("scraped", "Scraped", job.scraped, subject), meter("verified", "Verified", verified.value, subject, verified.unit));
     if (verified.by) li.append(element("p", "meter-by", verified.by));
     if (job.updated && when(job.updated)) li.append(element("p", "job-line", "Updated " + when(job.updated)));
+    for (const p of progressOf(job)) {
+      li.append(element("p", "job-line live", "Ingest " + (p.kind === "scrape" ? "scrape" : "verified") + " data: phase " + p.phase + "/3 · " + PHASES[p.phase] + (p.value ? " · " + p.value.done + "/" + p.value.total : "")));
+    }
 
     // What can be done, as the planner's Jobs screen has it.
     const canTitle = TITLE_SOURCE.test(job.source);
@@ -781,14 +799,18 @@ $("refresh").addEventListener("click", () => void load());
 $("open-jobs").addEventListener("click", () => { where = "jobs"; show(); void load(); });
 $("back").addEventListener("click", () => { where = "menu"; show(); });
 $("open-archive").addEventListener("click", () => { where = "archive"; show(); void loadArchived(); });
+$("pending").addEventListener("click", () => { onlyPending = !onlyPending; draw(); });
 $("archive-back").addEventListener("click", () => { where = "jobs"; show(); void load(); });
 $("archive-refresh").addEventListener("click", () => void loadArchived());
 
 /* The list is read again every ten seconds while it is on screen. */
 function watch() {
   window.clearInterval(timer);
+  window.clearInterval(progressTimer);
   if (state.token && where === "jobs") {
     timer = window.setInterval(() => { if (document.visibilityState === "visible" && busy === null) void load(); }, EVERY_MS);
+    // the ingest progress moves quickly: read every few seconds (SPT-090)
+    progressTimer = window.setInterval(() => { if (document.visibilityState === "visible") void loadProgress(); }, PROGRESS_EVERY_MS);
   }
 }
 document.addEventListener("visibilitychange", () => {
@@ -1032,8 +1054,56 @@ function more(job, subject) {
       box.append(element("p", "job-line warn", state.added.length + (state.added.length === 1 ? " query was" : " queries were") + " added since it was marked: " + state.added.slice(0, 5).join(", ") + (state.added.length > 5 ? ", ..." : "") + "."));
     }
     if (state.at && when(state.at)) box.append(element("p", "job-line", label + " marked " + when(state.at)));
+    const p = progressOf(job).find((r) => r.kind === kind);
+    if (p) {
+      const wrap = element("div", "progress");
+      wrap.dataset.kind = kind;
+      wrap.dataset.phase = String(p.phase);
+      wrap.append(element("b", "", "Phase " + p.phase + " of 3 · " + PHASES[p.phase]));
+      if (p.value) {
+        const bar = element("div", "bar");
+        bar.setAttribute("role", "img");
+        bar.setAttribute("aria-label", label + ", phase " + p.phase + ": " + p.value.done + " of " + p.value.total);
+        const fill = element("i");
+        fill.style.width = p.value.percent + "%";
+        bar.append(fill);
+        wrap.append(bar, element("span", "figure", p.value.done + "/" + p.value.total + " · " + p.value.percent + "%"));
+      }
+      if (p.message) wrap.append(element("code", "", p.message));
+      if (when(p.updated)) wrap.append(element("span", "", " " + when(p.updated)));
+      box.append(wrap);
+    }
   }
   return box;
+}
+
+/* ── the ingest phase and progress (SPT-090) ──────────────────────────── */
+
+const PHASES = { 1: "Commit to GitHub", 2: "Download", 3: "Ingest" };
+const PROGRESS_EVERY_MS = 3000;
+const progressOf = (job) => progress.filter((p) => p.machine === job.machine && p.id === job.id && p.source === job.source);
+
+async function loadProgress() {
+  if (!state.token || where !== "jobs") return;
+  try {
+    const rows = await rest("GET", "/job_ingest_progress?select=machine,id,source,kind,phase,progress,message,updated_at&order=updated_at.desc&limit=2000");
+    const next = (Array.isArray(rows) ? rows : []).flatMap((r) => {
+      if (!r || typeof r !== "object" || !MACHINE.test(String(r.machine)) || !Number.isSafeInteger(r.id) || typeof r.source !== "string") return [];
+      if ((r.kind !== "scrape" && r.kind !== "verify") || ![1, 2, 3].includes(r.phase)) return [];
+      const c = r.progress && typeof r.progress === "object" ? r.progress : null;
+      return [{
+        machine: String(r.machine), id: r.id, source: r.source, kind: r.kind, phase: r.phase,
+        value: c ? completion(Number(c.current) + "/" + Number(c.total)) : null,
+        message: typeof r.message === "string" ? r.message.slice(0, 300) : "",
+        updated: typeof r.updated_at === "string" ? r.updated_at : "",
+      }];
+    });
+    const changed = JSON.stringify(next) !== JSON.stringify(progress);
+    progress = next;
+    if (changed && busy === null && breaking === null && redoing === null) draw();
+  } catch {
+    /* not in the project yet, or not reachable: nothing is shown */
+  }
 }
 
 /* ── the archived jobs (SPT-085, SPT-088) ─────────────────────────────── */
