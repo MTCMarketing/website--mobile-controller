@@ -139,6 +139,15 @@
   summary { cursor: pointer; font-weight: 600; font-size: 14px; }
   details[open] summary { margin-bottom: 10px; }
 
+  .meter-by { margin: 2px 0 0 70px; color: var(--muted); font-size: 11px; }
+  details.more { margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+  details.more summary { display: flex; align-items: center; min-height: 44px; font-size: 13px; }
+  dl.times { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0 0 10px; font-size: 12px; }
+  dl.times dt { color: var(--muted); }
+  dl.times dd { margin: 0; overflow-wrap: anywhere; }
+  .ingest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 6px 0; font-size: 13px; }
+  .ingest b { min-width: 104px; font-weight: 600; }
+
   .hidden { display: none; }
 </style>
 </head>
@@ -194,6 +203,7 @@
       <button class="flat" id="back" aria-label="Back">&larr;</button>
       <h2 style="margin:0">Jobs</h2>
       <span class="gap"></span>
+      <button class="flat" id="open-archive">Archived</button>
       <button class="flat" id="refresh">Refresh</button>
     </div>
     <!-- job settings (SPT-074): what a start and a verify sent from here carry -->
@@ -202,6 +212,18 @@
     <p class="said" id="jobs-said" role="status"></p>
     <p class="said" id="act-said" role="status"></p>
     <ul id="list" aria-label="Jobs"></ul>
+  </section>
+
+  <!-- ── the archived jobs (SPT-085, SPT-088): taken out of the list, and put back ── -->
+  <section class="card hidden" id="archive">
+    <div class="row">
+      <button class="flat" id="archive-back" aria-label="Back to the jobs">&larr;</button>
+      <h2 style="margin:0">Archived jobs</h2>
+      <span class="gap"></span>
+      <button class="flat" id="archive-refresh">Refresh</button>
+    </div>
+    <p class="said" id="archive-said" role="status"></p>
+    <ul id="archived" aria-label="Archived jobs"></ul>
   </section>
 </main>
 
@@ -257,6 +279,10 @@ let where = "menu";
 let jobs = [];
 let busy = null;      // "machine|id" while a call is being sent
 let breaking = null;  // "machine|id" while "stop it now?" is asked
+let redoing = null;   // "machine|id" while "redo the scrape?" is asked (SPT-083)
+const opened = new Set();        // the jobs whose More is open, kept over the list's redraws
+const queriesOf = new Map();     // "machine|id" -> the job's queries, read when its More is opened
+let archivedJobs = null;
 let timer = 0;
 
 function show() {
@@ -276,6 +302,7 @@ function show() {
   $("needs").textContent = ready ? "" : "No project connected yet — fill in Connection below.";
   $("menu").classList.toggle("hidden", !inside || where !== "menu");
   $("jobs").classList.toggle("hidden", !inside || where !== "jobs");
+  $("archive").classList.toggle("hidden", !inside || where !== "archive");
 
   if (ready) {
     $("url").value = state.url || "";
@@ -428,8 +455,71 @@ function clean(item) {
     verifyStatus: text(item["verify-status"], 30),
     note: text(item.note, 500),
     made: text(item.datetime, 40),
+    // SPT-082, SPT-081, SPT-073, SPT-089: when the project last heard from it, its runs, its square, its ingested marks
+    updated: text(item["updated-datetime"], 40),
+    lastRun: text(item["last-run-datetime"], 40),
+    completedAt: text(item["completion-datetime"], 40),
+    square: text(item.square, 40),
+    ingest: marksOf(item.ingest),
   };
 }
+
+/** One ingested mark, checked: complete or not, when, and the job's queries then. */
+function markOf(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  if (v.status !== "complete" && v.status !== "incomplete") return null;
+  const at = typeof v.at === "string" && !Number.isNaN(Date.parse(v.at)) ? v.at : "";
+  const queries = Array.isArray(v.queries)
+    ? v.queries.filter((q) => typeof q === "string" && q.length > 0 && q.length <= 200).slice(0, 500)
+    : [];
+  return { status: v.status, at, queries };
+}
+/** The job's two marks (SPT-089): scrape data and verified data, apart; one mark of the first kind is the scrape one. */
+function marksOf(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  if ("status" in v) return { scrape: markOf(v) };
+  return { scrape: markOf(v.scrape), verify: markOf(v.verify) };
+}
+/** Complete only while no query of the job was added after it was marked (when the job's queries are known). */
+function ingestState(mark, queries) {
+  if (!mark || mark.status !== "complete") return { complete: false, at: mark ? mark.at : "", added: [] };
+  const then = new Set(mark.queries);
+  const added = (queries || []).filter((q) => !then.has(q));
+  return { complete: added.length === 0, at: mark.at, added };
+}
+
+/**
+ * How far the verify got by businesses, from the verifier's note (SPT-078, SPT-087): "756/1651 businesses processed; filtered 219 / 471 (...)".
+ * "filtered 219 / 471" is the filter's yield: 219 kept of the 471 it looked at, and those are verified, so 219/219. Nothing made up.
+ */
+function verifyCounts(note) {
+  if (!note) return null;
+  const num = (t) => Number(String(t).replace(/,/g, ""));
+  const part = (d, t) => (Number.isSafeInteger(d) && Number.isSafeInteger(t) && d >= 0 && d <= t
+    ? { done: d, total: t, percent: t === 0 ? 0 : Math.round((d / t) * 100) } : null);
+  const all = /(\d[\d,]{0,9})\s*\/\s*(\d[\d,]{0,9})\s+businesses\s+processed/i.exec(note);
+  const kept = /filtered\s+(\d[\d,]{0,9})\s*\/\s*(\d[\d,]{0,9})/i.exec(note);
+  const processed = all ? part(num(all[1]), num(all[2])) : null;
+  const yieldOf = kept ? part(num(kept[1]), num(kept[2])) : null;
+  if (!processed && !yieldOf) return null;
+  return { processed, filtered: yieldOf ? part(yieldOf.done, yieldOf.done) : null, considered: yieldOf ? yieldOf.total : null };
+}
+/** The verified bar as the planner shows it by default: the businesses the filter keeps, else all processed, else the queries. */
+function verifiedMeter(job) {
+  const counts = verifyCounts(job.note);
+  if (counts && counts.filtered) {
+    return { value: counts.filtered, unit: "businesses", by: "filtered businesses" + (counts.considered !== null ? " · " + counts.filtered.done + " of " + counts.considered + " kept" : "") };
+  }
+  if (counts && counts.processed) return { value: counts.processed, unit: "businesses", by: "all businesses" };
+  return { value: job.verified, unit: "queries", by: "" };
+}
+
+const when = (iso) => {
+  const t = new Date(iso);
+  return iso && !Number.isNaN(t.getTime())
+    ? t.toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+    : "";
+};
 
 const WORDS = {
   new: ["New", "Made, not started yet."],
@@ -511,13 +601,13 @@ function element(tag, className, text) {
   return el;
 }
 
-function meter(kind, label, value, subject) {
+function meter(kind, label, value, subject, unit = "queries") {
   const row = element("div", "meter");
   row.dataset.kind = kind;
   row.append(element("b", "", label));
   const bar = element("div", "bar");
   bar.setAttribute("role", "img");
-  bar.setAttribute("aria-label", label + " " + (value ? value.done + " of " + value.total + " queries" : "not known") + " for " + subject);
+  bar.setAttribute("aria-label", label + " " + (value ? value.done + " of " + value.total + " " + unit : "not known") + " for " + subject);
   const fill = element("i");
   fill.style.width = (value ? value.percent : 0) + "%";
   bar.append(fill);
@@ -579,13 +669,29 @@ function draw() {
     if (closedByError) li.append(element("p", "job-line warn", "Left open: closed by error?"));
     if (job.note) li.append(element("p", "job-line warn", job.note));
 
-    li.append(meter("scraped", "Scraped", job.scraped, subject), meter("verified", "Verified", job.verified, subject));
+    const verified = verifiedMeter(job);
+    li.append(meter("scraped", "Scraped", job.scraped, subject), meter("verified", "Verified", verified.value, subject, verified.unit));
+    if (verified.by) li.append(element("p", "meter-by", verified.by));
+    if (job.updated && when(job.updated)) li.append(element("p", "job-line", "Updated " + when(job.updated)));
 
     // What can be done, as the planner's Jobs screen has it.
     const canTitle = TITLE_SOURCE.test(job.source);
     const acts = element("div", "row acts");
     if (!canTitle) {
       li.append(element("p", "job-line warn", "This job's source has a form the buttons cannot name."));
+    } else if (redoing === keyOf(job)) {
+      // SPT-083: erases the job's progress in the project, so it is asked first
+      const ask = element("div", "ask");
+      ask.setAttribute("role", "alertdialog");
+      ask.setAttribute("aria-label", "Redo the scrape of " + subject);
+      ask.append(element("p", "", "Redo the scrape of job " + job.id + " on " + job.machine + "? This erases its progress in the project: every query back to not done, nothing verified, no ingested mark. The businesses already saved are not touched."));
+      const choices = element("div", "row");
+      choices.append(
+        button("Yes, erase and redo", "danger", () => { redoing = null; redo(job); }, "Yes, erase and redo the scrape of " + subject),
+        button("Not yet", "flat", () => { redoing = null; draw(); }),
+      );
+      ask.append(choices);
+      li.append(ask);
     } else if (breaking === keyOf(job)) {
       const ask = element("div", "ask");
       ask.setAttribute("role", "alertdialog");
@@ -635,10 +741,37 @@ function draw() {
       if (canRefreshVerify(job)) {
         acts.append(button("Refresh verify", "flat", () => void send(job, "refresh-verify"), "Refresh verify of " + subject));
       }
+      const busyJob = running || isBlocked(job.status);
+      // SPT-083: erase the progress and scrape it again; not while it runs (its machine would write the progress back)
+      if (hasProgress(job)) {
+        const b = button("Redo scrape", "flat", () => { redoing = keyOf(job); draw(); }, "Redo scrape of " + subject);
+        if (busyJob) { b.disabled = true; b.title = "Break it first"; }
+        acts.append(b);
+      }
+      // SPT-085: out of the list into the archive; not while it runs (its machine would put it back)
+      const arch = button("Archive", "flat", () => archive(job), "Archive " + subject);
+      if (busyJob) { arch.disabled = true; arch.title = "Break it first"; }
+      acts.append(arch);
+      // SPT-080: a job that has not started can go to another machine
+      const machines = [...new Set(jobs.map((j) => j.machine))].sort();
+      if (canMove(job) && machines.length > 1) {
+        const pick = element("select", "parts");
+        pick.setAttribute("aria-label", "Machine of " + subject);
+        for (const m of machines) {
+          const option = element("option", "", m);
+          option.value = m;
+          pick.append(option);
+        }
+        pick.value = job.machine;
+        pick.disabled = busy !== null;
+        pick.addEventListener("change", () => { if (pick.value !== job.machine) move(job, pick.value); });
+        acts.append(pick);
+      }
       if (isBlocked(job.status)) {
         li.append(element("p", "job-line warn", "Waiting for a captcha: solve it on the machine."));
       }
       if (acts.childNodes.length > 0) li.append(acts);
+      li.append(more(job, subject));
     }
     list.append(li);
   }
@@ -647,6 +780,9 @@ function draw() {
 $("refresh").addEventListener("click", () => void load());
 $("open-jobs").addEventListener("click", () => { where = "jobs"; show(); void load(); });
 $("back").addEventListener("click", () => { where = "menu"; show(); });
+$("open-archive").addEventListener("click", () => { where = "archive"; show(); void loadArchived(); });
+$("archive-back").addEventListener("click", () => { where = "jobs"; show(); void load(); });
+$("archive-refresh").addEventListener("click", () => void loadArchived());
 
 /* The list is read again every ten seconds while it is on screen. */
 function watch() {
@@ -760,6 +896,210 @@ async function send(job, action, split) {
   } finally {
     busy = null;
     draw();
+  }
+}
+
+/* ── changing a job in the project (as the planner's Jobs screen does) ──
+ *
+ * These write the project's jobs table and its functions with the signed-in
+ * account; the table's rules let only the scraper account do it.
+ */
+const canMove = (job) => job.status === "new" && !!job.scraped && job.scraped.done === 0 && (!job.verified || job.verified.done === 0);
+const hasProgress = (job) => (!!job.scraped && job.scraped.done > 0) || (!!job.verified && job.verified.done > 0) || job.status !== "new";
+const whereJob = (job) =>
+  "machine=eq." + encodeURIComponent(job.machine) + "&id=eq." + job.id + "&source=eq." + encodeURIComponent(job.source);
+const idOf = (job) => ({ job_id: job.id, machine: job.machine, source: job.source });
+
+/** A call to the project's REST API as the signed-in account; what went wrong is said in words. */
+async function rest(method, path, body, prefer) {
+  const headers = { "content-type": "application/json" };
+  if (prefer) headers.prefer = prefer;
+  const response = await api("/rest/v1" + path, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+  const answer = await response.json().catch(() => null);
+  if (response.ok) return answer;
+  const code = answer && typeof answer.code === "string" ? answer.code : "";
+  const message = answer && typeof answer.message === "string" ? answer.message : "";
+  if (code === "PGRST202" || code === "PGRST205" || code === "42P01") throw new Error("The project does not have this yet: its SQL was not run.");
+  if (code === "42501" || response.status === 403) throw new Error("This account may not change jobs: sign in as the scraper account.");
+  if (code === "23505") throw new Error("That machine already has this job.");
+  throw new Error(message.slice(0, 300) || "The project answered " + response.status + ".");
+}
+
+/** One change to a job: said while it goes, then the list is read again. */
+async function act(job, going, work) {
+  if (busy !== null) return;
+  busy = keyOf(job);
+  draw();
+  say("act-said", going);
+  try {
+    const done = await work();
+    say("act-said", done, "ok");
+    await load();
+  } catch (error) {
+    say("act-said", error.message, "bad");
+  } finally {
+    busy = null;
+    draw();
+  }
+}
+
+/** The job's queries as the project has them (the list carries only counts). */
+async function queriesOfJob(job) {
+  const full = await rest("GET", "/rpc/job_get?job_id=" + job.id + "&machine=" + encodeURIComponent(job.machine) + "&source=" + encodeURIComponent(job.source));
+  const list = full && Array.isArray(full.query) ? full.query : [];
+  return [...new Set(list.map((q) => (q && typeof q.value === "string" ? q.value.trim() : "")).filter((v) => v && v.length <= 200))];
+}
+
+function redo(job) {
+  void act(job, "Erasing job " + job.id + "'s progress…", async () => {
+    const values = await queriesOfJob(job);
+    if (values.length === 0) throw new Error("The job has no queries to scrape again.");
+    const changed = await rest(
+      "PATCH",
+      "/jobs?" + whereJob(job) + "&status=not.in.(running,blocked,capcha)&select=id",
+      { query: values.map((value) => ({ value, count: 0, completed: false })), status: "new", state: "close", last_run_at: null, completed_at: null, note: null, steps: {}, ingest: {} },
+      "return=representation",
+    );
+    if (!Array.isArray(changed) || changed.length !== 1) {
+      throw new Error("Job " + job.id + " was not reset: it is running (or waiting for a captcha). Break it first, then redo the scrape.");
+    }
+    queriesOf.delete(keyOf(job));
+    return "Job " + job.id + "'s progress is erased: every query is to be scraped again. Press Start to scrape it.";
+  });
+}
+
+function archive(job) {
+  void act(job, "Archiving job " + job.id + "…", async () => {
+    await rest("POST", "/rpc/job_archive", idOf(job));
+    return "Job " + job.id + " is archived: see Archived at the top.";
+  });
+}
+
+function move(job, to) {
+  void act(job, "Moving job " + job.id + " to " + to + "…", async () => {
+    const changed = await rest("PATCH", "/jobs?" + whereJob(job) + "&status=eq.new&queries_done=eq.0&select=machine,id", { machine: to }, "return=representation");
+    if (!Array.isArray(changed) || changed.length !== 1) throw new Error("Job " + job.id + " was not moved: it started meanwhile.");
+    return "Job " + job.id + " is on " + to + " now: Start sends it to " + to + "'s device.";
+  });
+}
+
+function markIngested(job, kind, complete) {
+  const what = kind === "scrape" ? "scrape data" : "verified data";
+  void act(job, "Marking job " + job.id + "'s " + what + "…", async () => {
+    await rest("POST", "/rpc/job_set_ingested", { ...idOf(job), kind, complete });
+    queriesOf.delete(keyOf(job));
+    return "Job " + job.id + ": " + what + " marked " + (complete ? "ingested (complete)." : "not ingested (incomplete).");
+  });
+}
+
+/** More about a job (SPT-081, SPT-086): its times, its square, and whether its data is ingested, each with its button (SPT-089). */
+function more(job, subject) {
+  const key = keyOf(job);
+  const box = element("details", "more");
+  box.open = opened.has(key);
+  box.append(element("summary", "", "More"));
+  box.addEventListener("toggle", () => {
+    if (!box.open) { opened.delete(key); return; }
+    opened.add(key);
+    if (!queriesOf.has(key)) {
+      queriesOf.set(key, null);
+      queriesOfJob(job).then((q) => { queriesOf.set(key, q); if (busy === null) draw(); }).catch(() => queriesOf.delete(key));
+    }
+  });
+  const times = element("dl", "times");
+  for (const [label, value] of [["Made", job.made], ["Last run", job.lastRun], ["Completed", job.completedAt], ["Updated", job.updated]]) {
+    times.append(element("dt", "", label), element("dd", "", when(value) || "—"));
+  }
+  if (job.square) times.append(element("dt", "", "Square"), element("dd", "", job.square));
+  box.append(times);
+  const queries = queriesOf.get(key) || null;
+  for (const kind of ["scrape", "verify"]) {
+    const state = ingestState(job.ingest[kind], queries);
+    const label = kind === "scrape" ? "Scrape data" : "Verified data";
+    const line = element("div", "ingest");
+    line.dataset.kind = kind;
+    line.append(element("b", "", label));
+    const pill = element("span", "pill", state.complete ? "Ingested" : "Not ingested");
+    pill.dataset.tone = state.complete ? "complete" : "";
+    line.append(pill);
+    line.append(button(
+      state.complete ? "Mark incomplete" : "Mark complete", "flat",
+      () => markIngested(job, kind, !state.complete),
+      (state.complete ? "Mark incomplete: " : "Mark complete: ") + label.toLowerCase() + " of " + subject,
+    ));
+    box.append(line);
+    if (state.added.length > 0) {
+      box.append(element("p", "job-line warn", state.added.length + (state.added.length === 1 ? " query was" : " queries were") + " added since it was marked: " + state.added.slice(0, 5).join(", ") + (state.added.length > 5 ? ", ..." : "") + "."));
+    }
+    if (state.at && when(state.at)) box.append(element("p", "job-line", label + " marked " + when(state.at)));
+  }
+  return box;
+}
+
+/* ── the archived jobs (SPT-085, SPT-088) ─────────────────────────────── */
+
+async function loadArchived() {
+  if (!state.token || where !== "archive") return;
+  try {
+    const rows = await rest("GET", "/archived_jobs?select=machine,id,source,status,queries_done,queries_total,archived_at&order=archived_at.desc&limit=500");
+    archivedJobs = (Array.isArray(rows) ? rows : []).flatMap((r) => {
+      if (!r || typeof r !== "object" || !MACHINE.test(String(r.machine)) || !Number.isSafeInteger(r.id) || r.id < 1 || typeof r.source !== "string") return [];
+      return [{
+        machine: String(r.machine), id: r.id, source: r.source.slice(0, 200),
+        status: typeof r.status === "string" ? r.status.slice(0, 30) : "",
+        scraped: completion(Number(r.queries_done) + "/" + Number(r.queries_total)),
+        at: typeof r.archived_at === "string" ? r.archived_at : "",
+      }];
+    });
+    drawArchived();
+    say("archive-said", archivedJobs.length + (archivedJobs.length === 1 ? " archived job" : " archived jobs") + " · read " + new Date().toLocaleTimeString());
+  } catch (error) {
+    if (state.token) say("archive-said", error.message, "bad");
+  }
+}
+
+function drawArchived() {
+  const list = $("archived");
+  list.replaceChildren();
+  if (!archivedJobs) return;
+  if (archivedJobs.length === 0) {
+    list.append(element("li", "job", "No job is archived."));
+    return;
+  }
+  for (const job of archivedJobs) {
+    const subject = "job " + job.id + " on " + job.machine;
+    const li = element("li", "job");
+    li.dataset.machine = job.machine;
+    li.dataset.jobId = String(job.id);
+    const top = element("div", "job-top");
+    top.append(element("strong", "", job.machine + " · job " + job.id));
+    const pill = element("span", "pill", wordsOf(job.status || "new")[0]);
+    pill.dataset.tone = toneOf(job.status);
+    top.append(pill);
+    li.append(top, element("p", "job-src", job.source), meter("scraped", "Scraped", job.scraped, subject));
+    if (when(job.at)) li.append(element("p", "job-line", "Archived " + when(job.at)));
+    const acts = element("div", "row acts");
+    acts.append(button("Put back", "", () => void putBack(job), "Put back " + subject));
+    li.append(acts);
+    list.append(li);
+  }
+}
+
+async function putBack(job) {
+  if (busy !== null) return;
+  busy = keyOf(job);
+  drawArchived();
+  say("archive-said", "Putting job " + job.id + " back…");
+  try {
+    await rest("POST", "/rpc/job_unarchive", idOf(job));
+    busy = null;
+    await loadArchived();
+    say("archive-said", "Job " + job.id + " is back in the list of jobs.", "ok");
+  } catch (error) {
+    say("archive-said", error.message, "bad");
+  } finally {
+    busy = null;
+    drawArchived();
   }
 }
 
