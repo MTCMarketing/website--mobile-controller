@@ -692,7 +692,7 @@ function draw() {
     if (verified.by) li.append(element("p", "meter-by", verified.by));
     if (job.updated && when(job.updated)) li.append(element("p", "job-line", "Updated " + when(job.updated)));
     for (const p of progressOf(job)) {
-      li.append(element("p", "job-line live", "Ingest " + (p.kind === "scrape" ? "scrape" : "verified") + " data: phase " + p.phase + "/3 · " + PHASES[p.phase] + (p.value ? " · " + p.value.done + "/" + p.value.total : "")));
+      li.append(element("p", "job-line live", "Ingest " + (p.kind === "scrape" ? "scrape" : "verified") + " data: phase " + p.phase + "/3 · " + PHASES[p.phase] + (p.value ? " · " + p.value.done + "/" + p.value.total : "") + (p.state === "running" ? "" : " · " + p.state)));
     }
 
     // What can be done, as the planner's Jobs screen has it.
@@ -1070,6 +1070,12 @@ function more(job, subject) {
       "Commit " + (kind === "scrape" ? "scrape" : "verified") + " data of " + subject + " to GitHub",
     );
     if (!hasData) { commit.disabled = true; commit.title = "Nothing to commit yet"; }
+    // not while this data is on its way; a step not heard from for 15 minutes may have stopped, so it can be pressed again
+    const going = progressOf(job).find((r) => r.kind === kind);
+    if (going && going.state === "running" && Date.now() - Date.parse(going.updated) < 15 * 60 * 1000) {
+      commit.disabled = true;
+      commit.title = "It is running";
+    }
     const commitRow = element("div", "row acts");
     commitRow.dataset.commit = kind;
     commitRow.append(commit);
@@ -1079,7 +1085,7 @@ function more(job, subject) {
       const wrap = element("div", "progress");
       wrap.dataset.kind = kind;
       wrap.dataset.phase = String(p.phase);
-      wrap.append(element("b", "", "Phase " + p.phase + " of 3 · " + PHASES[p.phase]));
+      wrap.append(element("b", "", "Phase " + p.phase + " of 3 · " + PHASES[p.phase] + (p.state === "running" ? "" : " · " + p.state)));
       if (p.value) {
         const bar = element("div", "bar");
         bar.setAttribute("role", "img");
@@ -1091,6 +1097,9 @@ function more(job, subject) {
       }
       if (p.message) wrap.append(element("code", "", p.message));
       if (when(p.updated)) wrap.append(element("span", "", " " + when(p.updated)));
+      if (p.phase === 1 && p.state === "done") {
+        wrap.append(element("p", "job-line", "Committed: the planner on the computer with the local server pulls and ingests it."));
+      }
       box.append(wrap);
     }
   }
@@ -1119,7 +1128,7 @@ const progressOf = (job) => progress.filter((p) => p.machine === job.machine && 
 async function loadProgress() {
   if (!state.token || where !== "jobs") return;
   try {
-    const rows = await rest("GET", "/job_ingest_progress?select=machine,id,source,kind,phase,progress,message,updated_at&order=updated_at.desc&limit=2000");
+    const rows = await rest("GET", "/job_ingest_progress?select=*&order=updated_at.desc&limit=2000");
     const next = (Array.isArray(rows) ? rows : []).flatMap((r) => {
       if (!r || typeof r !== "object" || !MACHINE.test(String(r.machine)) || !Number.isSafeInteger(r.id) || typeof r.source !== "string") return [];
       if ((r.kind !== "scrape" && r.kind !== "verify") || ![1, 2, 3].includes(r.phase)) return [];
@@ -1128,6 +1137,8 @@ async function loadProgress() {
         machine: String(r.machine), id: r.id, source: r.source, kind: r.kind, phase: r.phase,
         value: c ? completion(Number(c.current) + "/" + Number(c.total)) : null,
         message: typeof r.message === "string" ? r.message.slice(0, 300) : "",
+        // how the phase stands (SPT-094): a commit that is done is what starts the pull and ingest on the planner
+        state: r.state === "done" || r.state === "failed" ? r.state : "running",
         updated: typeof r.updated_at === "string" ? r.updated_at : "",
       }];
     });
