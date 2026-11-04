@@ -513,8 +513,11 @@ function verifyCounts(note) {
   const kept = /filtered\s+(\d[\d,]{0,9})\s*\/\s*(\d[\d,]{0,9})/i.exec(note);
   const processed = all ? part(num(all[1]), num(all[2])) : null;
   const yieldOf = kept ? part(num(kept[1]), num(kept[2])) : null;
-  if (!processed && !yieldOf) return null;
-  return { processed, filtered: yieldOf ? part(yieldOf.done, yieldOf.done) : null, considered: yieldOf ? yieldOf.total : null };
+  // while it runs the numbers are its progress: "filtered 0 / 695 (...); running" has 695 to go through, not 0 kept of 695
+  const going = /;\s*(running|preparing)\s*$/i.test(note);
+  const filtered = yieldOf ? (going ? yieldOf : part(yieldOf.done, yieldOf.done)) : null;
+  if (!processed && !filtered) return null;
+  return { processed, filtered, considered: yieldOf && !going ? yieldOf.total : null };
 }
 /** The verified bar as the planner shows it by default: the businesses the filter keeps, else all processed, else the queries. */
 function verifiedMeter(job) {
