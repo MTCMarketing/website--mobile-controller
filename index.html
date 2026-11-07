@@ -18,11 +18,13 @@
     --warn: #b45309;
     --bad: #c0462f;
     --ok: #1f7a4f;
+    --done-bg: #ecfdf3;
     --btn: #1d4ed8;
     --btn-bad: #c0462f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
+      --done-bg: #12281d;
       --line: #2a3542; --muted: #93a1b1; --bg: #0f151c; --card: #161e27; --ink: #e8eef5;
       --accent: #5b8def; --verified: #3fbf86; --warn: #f0a04b; --bad: #ef7a63; --ok: #4cc58a;
       --btn: #2955c9; --btn-bad: #b43f2a;
@@ -106,6 +108,8 @@
   }
   li.job[data-state="open"] { border-left-color: var(--ok); }
   li.job[data-state="closed"] { border-left-color: var(--muted); }
+  li.job[data-finished="true"] { background: var(--done-bg); border-left-color: var(--ok); }
+  .done-mark { color: var(--ok); font-weight: 700; }
   .job-top { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; }
   .job-top strong { font-size: 15px; }
   .job-top .made { margin-left: auto; color: var(--muted); font-size: 12px; }
@@ -123,6 +127,11 @@
   .pill[data-tone="complete"] { color: var(--accent); border-color: var(--accent); }
   .job-src { margin: 3px 0 6px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, monospace; }
   .job-line { margin: 2px 0; font-size: 12px; color: var(--muted); }
+  .active-title { margin: 10px 0 2px; font-size: 13px; }
+  #active { list-style: none; margin: 0 0 8px; padding: 0; font-size: 13px; }
+  #active li { margin: 2px 0; overflow-wrap: anywhere; }
+  #active li[data-work="none"] { color: var(--muted); }
+  #active .quiet { color: var(--warn); font-size: 12px; }
   .job-line.warn { color: var(--warn); }
 
   .meter { display: grid; grid-template-columns: 62px 1fr auto; align-items: center; gap: 8px; margin-top: 5px; font-size: 12px; color: var(--muted); }
@@ -218,6 +227,10 @@
     <label class="check"><input type="checkbox" id="noWebsite"> Verify only businesses without a website <small>(much faster)</small></label>
     <p class="said" id="jobs-said" role="status"></p>
     <p class="said" id="act-said" role="status"></p>
+    <div id="active-box" class="hidden">
+      <h3 class="active-title">Running now</h3>
+      <ul id="active" aria-label="What each machine is doing now"></ul>
+    </div>
     <ul id="list" aria-label="Jobs"></ul>
   </section>
 
@@ -566,8 +579,17 @@ function scrapeWords(job) {
   }
   return [job.status === "running" ? "Scraping" : label, meaning, toneOf(job.status)];
 }
+/** How many the verify's filter took in, when it went through them all (SPT-099): "filtered 695 / 695" once it ended; what is left is outside the filter. */
+function filterVerified(job) {
+  if (isVerifying(job) || job.status === "running") return null;
+  const counts = verifyCounts(job.note);
+  const done = counts && counts.filtered ? counts.filtered.done : 0;
+  return done > 0 && counts.considered === done ? done : null;
+}
 /** What the machine wrote for the verify, or what its count says; nothing made up. */
 function verifyWords(job) {
+  const kept = filterVerified(job);
+  if (kept !== null) return ["Complete", "All " + kept + " businesses the verify's filter kept are verified; what is left is outside the filter.", "complete"];
   const said = job.verifyStatus.toLowerCase();
   if (said) return [said === "running" ? "Verifying" : wordsOf(said)[0], "The verify's status, as the machine wrote it.", toneOf(said)];
   const v = job.verified;
@@ -641,7 +663,65 @@ function button(label, className, onClick, aria) {
   return b;
 }
 
+/** How long a running job may say nothing before it is flagged, and how long that was, as the planner has them. */
+const QUIET_MS = 30 * 60 * 1000;
+function roughly(ms) {
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 90) return minutes + " min";
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? hours + " h" : Math.round(hours / 24) + " days";
+}
+/** What a job is doing now (SPT-102), as the planner's Jobs screen has it. */
+function workOf(job) {
+  const said = job.verifyStatus.toLowerCase();
+  if (said === "blocked" || said === "capcha" || isBlocked(job.status)) return "waiting for a captcha";
+  if (said === "running") return "verifying";
+  if (job.status !== "running") return "";
+  return allDone(job.scraped) && !(job.verified && allDone(job.verified)) ? "verifying" : "scraping";
+}
+/** Everything is done and in (SPT-105), as the planner has it: both marks, both bars by the businesses the filter keeps, nothing running it. */
+function jobFinished(job) {
+  const total = job.scraped ? job.scraped.total : 0;
+  const marked = (m) => !!m && m.status === "complete" && m.queries.length >= total;
+  return !workOf(job) && allDone(job.scraped) && allDone(verifiedMeter(job).value) && marked(job.ingest.scrape) && marked(job.ingest.verify);
+}
+/** Where a job's data is, a line for each kind (SPT-097). */
+function appendIngestLines(li, job) {
+  for (const kind of ["scrape", "verify"]) {
+    const [words, tone] = ingestLine(job.ingest[kind], progressOf(job).find((p) => p.kind === kind), job.scraped ? job.scraped.total : 0);
+    const line = element("p", ("job-line " + tone).trim(), "Ingest " + (kind === "scrape" ? "scrape" : "verified") + ": " + words);
+    line.dataset.kind = kind;
+    li.append(line);
+  }
+}
+/** One line per job at work, and one for a machine with none (SPT-102): "mm1 | source | scraping". */
+function drawActive() {
+  const box = $("active");
+  box.replaceChildren();
+  $("active-box").classList.toggle("hidden", jobs.length === 0);
+  for (const machine of [...new Set(jobs.map((job) => job.machine))].sort()) {
+    const busy = jobs.filter((job) => job.machine === machine && workOf(job));
+    for (const job of busy) {
+      const li = element("li", "", machine + " | " + job.source + " | " + workOf(job));
+      li.dataset.machine = machine;
+      li.dataset.work = workOf(job);
+      if (job.status === "running" && job.updated) {
+        const since = Date.now() - Date.parse(job.updated);
+        if (since >= QUIET_MS) li.append(" ", element("span", "quiet", "no update for " + roughly(since)));
+      }
+      box.append(li);
+    }
+    if (busy.length === 0) {
+      const li = element("li", "", machine + " | no job running");
+      li.dataset.machine = machine;
+      li.dataset.work = "none";
+      box.append(li);
+    }
+  }
+}
+
 function draw() {
+  drawActive();
   const list = $("list");
   list.replaceChildren();
 
@@ -663,8 +743,10 @@ function draw() {
     li.dataset.machine = job.machine;
     li.dataset.jobId = String(job.id);
     li.dataset.status = job.status;
+    li.dataset.finished = jobFinished(job) ? "true" : "false";
 
     const top = element("div", "job-top");
+    if (li.dataset.finished === "true") top.append(element("span", "done-mark", "✓ Finished"));
     top.append(element("strong", "", job.machine + " · job " + job.id));
     const pill = element("span", "pill", "Scrape: " + label);
     pill.dataset.tone = tone;
@@ -694,9 +776,7 @@ function draw() {
     li.append(meter("scraped", "Scraped", job.scraped, subject), meter("verified", "Verified", verified.value, subject, verified.unit));
     if (verified.by) li.append(element("p", "meter-by", verified.by));
     if (job.updated && when(job.updated)) li.append(element("p", "job-line", "Updated " + when(job.updated)));
-    for (const p of progressOf(job)) {
-      li.append(element("p", "job-line live", "Ingest " + (p.kind === "scrape" ? "scrape" : "verified") + " data: phase " + p.phase + "/3 · " + PHASES[p.phase] + (p.value ? " · " + p.value.done + "/" + p.value.total : "") + (p.state === "running" ? "" : " · " + p.state)));
-    }
+    appendIngestLines(li, job);
 
     // What can be done, as the planner's Jobs screen has it.
     const canTitle = TITLE_SOURCE.test(job.source);
@@ -1127,6 +1207,25 @@ const inIdaho = (job) => jobStates.get(job.machine + "|" + job.id + "|" + job.so
 const PHASES = { 1: "Commit to GitHub", 2: "Download", 3: "Ingest" };
 const PROGRESS_EVERY_MS = 3000;
 const progressOf = (job) => progress.filter((p) => p.machine === job.machine && p.id === job.id && p.source === job.source);
+const STALLED_MS = 15 * 60 * 1000;
+/** One kind of a job's data in a few words (SPT-097), as the planner's Jobs table has it: the progress row and the job's mark, whichever was written last. */
+function ingestLine(mark, row, queries) {
+  const stepping = !!row && !(mark && Date.parse(mark.at) >= Date.parse(row.updated));
+  if (stepping) {
+    if (row.state === "done" && row.phase < 3) return ["committed, ready to ingest", "live"];
+    if (row.state !== "done") {
+      const step = "phase " + row.phase + "/3 · " + PHASES[row.phase] + (row.value ? " · " + row.value.done + "/" + row.value.total : "");
+      if (row.state === "failed") return [step + " · failed", "warn"];
+      const at = Date.parse(row.updated);
+      if (!Number.isNaN(at) && Date.now() - at > STALLED_MS) return [step + " · no report for a while", "warn"];
+      return [step, "live"];
+    }
+  }
+  const added = mark && mark.status === "complete" ? queries - mark.queries.length : 0;
+  if (added > 0) return ["not ingested: " + added + " new " + (added === 1 ? "query" : "queries"), "warn"];
+  if ((mark && mark.status === "complete") || stepping) return ["ingested", ""];
+  return ["not ingested", ""];
+}
 
 async function loadProgress() {
   if (!state.token || where !== "jobs") return;
@@ -1158,15 +1257,19 @@ async function loadProgress() {
 async function loadArchived() {
   if (!state.token || where !== "archive") return;
   try {
-    const rows = await rest("GET", "/archived_jobs?select=machine,id,source,status,queries_done,queries_total,archived_at&order=archived_at.desc&limit=500");
+    const rows = await rest("GET", "/archived_jobs?select=machine,id,source,state,status,queries_done,queries_total,queries_verified,note,steps,ingest,updated_at,archived_at&order=archived_at.desc&limit=500");
     archivedJobs = (Array.isArray(rows) ? rows : []).flatMap((r) => {
-      if (!r || typeof r !== "object" || !MACHINE.test(String(r.machine)) || !Number.isSafeInteger(r.id) || r.id < 1 || typeof r.source !== "string") return [];
-      return [{
-        machine: String(r.machine), id: r.id, source: r.source.slice(0, 200),
-        status: typeof r.status === "string" ? r.status.slice(0, 30) : "",
-        scraped: completion(Number(r.queries_done) + "/" + Number(r.queries_total)),
-        at: typeof r.archived_at === "string" ? r.archived_at : "",
-      }];
+      if (!r || typeof r !== "object") return [];
+      // as the list has a job, so that the archive says the same (SPT-107)
+      const total = Number(r.queries_total);
+      const steps = r.steps && typeof r.steps === "object" ? r.steps : {};
+      const job = clean({
+        machine: r.machine, id: r.id, source: r.source, state: r.state, status: r.status,
+        completion: Number(r.queries_done) + "/" + total, verified: Number(r.queries_verified) + "/" + total,
+        note: r.note, "verify-status": steps.verify && steps.verify.status,
+        "updated-datetime": r.updated_at, ingest: r.ingest,
+      });
+      return job ? [{ ...job, at: typeof r.archived_at === "string" ? r.archived_at : "" }] : [];
     });
     drawArchived();
     say("archive-said", archivedJobs.length + (archivedJobs.length === 1 ? " archived job" : " archived jobs") + " · read " + new Date().toLocaleTimeString());
@@ -1188,12 +1291,23 @@ function drawArchived() {
     const li = element("li", "job");
     li.dataset.machine = job.machine;
     li.dataset.jobId = String(job.id);
+    li.dataset.finished = jobFinished(job) ? "true" : "false";
     const top = element("div", "job-top");
+    if (li.dataset.finished === "true") top.append(element("span", "done-mark", "✓ Finished"));
     top.append(element("strong", "", job.machine + " · job " + job.id));
-    const pill = element("span", "pill", wordsOf(job.status || "new")[0]);
-    pill.dataset.tone = toneOf(job.status);
-    top.append(pill);
-    li.append(top, element("p", "job-src", job.source), meter("scraped", "Scraped", job.scraped, subject));
+    const [label, , tone] = scrapeWords(job);
+    const [vLabel, , vTone] = verifyWords(job);
+    const pill = element("span", "pill", "Scrape: " + label);
+    pill.dataset.tone = tone;
+    const vPill = element("span", "pill", "Verify: " + vLabel);
+    vPill.dataset.tone = vTone;
+    top.append(pill, vPill);
+    li.append(top, element("p", "job-src", job.source));
+    if (job.note) li.append(element("p", "job-line warn", job.note));
+    const verified = verifiedMeter(job);
+    li.append(meter("scraped", "Scraped", job.scraped, subject), meter("verified", "Verified", verified.value, subject, verified.unit));
+    if (verified.by) li.append(element("p", "meter-by", verified.by));
+    appendIngestLines(li, job);
     if (when(job.at)) li.append(element("p", "job-line", "Archived " + when(job.at)));
     const acts = element("div", "row acts");
     acts.append(button("Put back", "", () => void putBack(job), "Put back " + subject));
