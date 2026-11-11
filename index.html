@@ -137,6 +137,60 @@
   li.job[data-state="closed"] { border-left-color: var(--muted); }
   li.job[data-finished="true"] { background: var(--done-bg); border-left-color: var(--ok); }
   .done-mark { color: var(--ok); font-weight: 700; }
+
+  /* ── notifications (ETK-102) ──────────────────────────────────────
+     Unread is the only state worth seeing from across a room, so it is
+     carried twice: a dot, and weight on the title. Everything else on
+     the row is the quiet detail you read once you have stopped. */
+  li.alert {
+    display: flex;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line);
+    border-radius: 0 10px 10px 0;
+    background: var(--card);
+    cursor: pointer;
+  }
+  li.alert[data-level="warn"] { border-left-color: var(--warn); }
+  li.alert[data-level="error"] { border-left-color: var(--bad); }
+  li.alert[data-unseen="yes"] { border-left-color: var(--accent); }
+  li.alert .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  li.alert[data-unseen="no"] .dot { background: transparent; }
+  .alert-body { flex: 1; min-width: 0; }
+  .alert-title { font-weight: 600; overflow-wrap: anywhere; }
+  li.alert[data-unseen="no"] .alert-title { font-weight: 400; color: var(--muted); }
+  .alert-foot { margin-top: 3px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .alert-full h3 { margin: 0 0 4px; font-size: 17px; overflow-wrap: anywhere; }
+  .alert-full .alert-text { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .alert-full pre {
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    border-radius: 9px;
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .count {
+    display: inline-block;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+  }
   .job-top { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; }
   .job-top strong { font-size: 15px; }
   .job-top .made { margin-left: auto; color: var(--muted); font-size: 12px; }
@@ -242,6 +296,9 @@
     <p class="said" id="who-said"></p>
     <div class="row">
       <button id="open-jobs">Scraper jobs</button>
+      <!-- ETK-102. The count is the reason this button exists on a phone:
+           it answers "is there anything?" without opening anything. -->
+      <button class="flat" id="open-alerts">Notifications <span class="count hidden" id="unseen">0</span></button>
       <span class="gap"></span>
       <button class="flat" id="out">Sign out</button>
     </div>
@@ -279,6 +336,27 @@
     </div>
     <p class="said" id="archive-said" role="status"></p>
     <ul id="archived" aria-label="Archived jobs"></ul>
+  </section>
+  <!-- ── what has been sent here   (ETK-102) ───────────────────────── -->
+  <section class="card hidden" id="alerts">
+    <div class="row">
+      <button class="flat" id="alerts-back" aria-label="Back">&larr;</button>
+      <h2 style="margin:0">Notifications</h2>
+      <span class="gap"></span>
+      <button class="flat" id="alerts-refresh">Refresh</button>
+    </div>
+    <p class="said" id="alerts-said" role="status"></p>
+    <ul id="alert-list" aria-label="Notifications"></ul>
+  </section>
+
+  <!-- ── one of them, in full ───────────────────────────────────────── -->
+  <section class="card hidden" id="alert">
+    <div class="row">
+      <button class="flat" id="alert-back" aria-label="Back to notifications">&larr;</button>
+      <h2 style="margin:0">Notification</h2>
+    </div>
+    <div class="alert-full" id="alert-one"></div>
+    <p class="said" id="alert-said" role="status"></p>
   </section>
 </main>
 
@@ -363,6 +441,8 @@ function show() {
   $("menu").classList.toggle("hidden", !inside || where !== "menu");
   $("jobs").classList.toggle("hidden", !inside || where !== "jobs");
   $("archive").classList.toggle("hidden", !inside || where !== "archive");
+  $("alerts").classList.toggle("hidden", !inside || where !== "alerts");
+  $("alert").classList.toggle("hidden", !inside || where !== "alert");
 
   if (ready) {
     $("url").value = state.url || "";
@@ -1368,6 +1448,121 @@ async function putBack(job) {
     drawArchived();
   }
 }
+
+/* ---------------------------------------------------------------------------
+ *  Notifications.   (ETK-102)
+ *
+ *  Things happen on machines nobody is watching. This is where they say so:
+ *  a list of what has been sent, newest first, and the full text of one when
+ *  it is opened.
+ *
+ *  Opening one is what marks it read, and it is the database that is told --
+ *  not this browser. Read on the phone has to mean read on the laptop too,
+ *  or the count is a count of what this device has happened to see, which is
+ *  not a thing anybody wants to know.
+ *
+ *  Nothing is inserted from here. Notifications arrive through notify(),
+ *  which wants a sending key this page does not have and should not have.
+ * ------------------------------------------------------------------------ */
+
+let alerts = [];
+let shown = null;
+
+const unseenCount = () => alerts.filter((one) => !one.seen_at).length;
+
+function showUnseen() {
+  const count = unseenCount();
+  const badge = $("unseen");
+  badge.textContent = String(count);
+  badge.classList.toggle("hidden", count === 0);
+}
+
+async function loadAlerts() {
+  if (!state.token) return;
+  say("alerts-said", "Reading…");
+  try {
+    alerts = (await rest("GET", "/notifications?select=*&order=created_at.desc&limit=100")) || [];
+    drawAlerts();
+    showUnseen();
+    const count = unseenCount();
+    say("alerts-said", alerts.length === 0
+      ? "Nothing has been sent here yet."
+      : count === 0
+        ? alerts.length + (alerts.length === 1 ? " notification, all read." : " notifications, all read.")
+        : count + " unread of " + alerts.length + ".");
+  } catch (error) {
+    say("alerts-said", error.message, "bad");
+  }
+}
+
+function drawAlerts() {
+  const list = $("alert-list");
+  list.replaceChildren();
+
+  for (const row of alerts) {
+    const li = element("li", "alert");
+    li.dataset.level = row.level || "info";
+    li.dataset.unseen = row.seen_at ? "no" : "yes";
+    li.tabIndex = 0;
+    li.setAttribute("role", "button");
+    li.append(element("span", "dot"));
+
+    const body = element("div", "alert-body");
+    body.append(element("div", "alert-title", row.title || "Untitled"));
+    body.append(element("div", "alert-foot",
+      [row.source, when(row.created_at), row.seen_at ? "read" : "unread"].filter(Boolean).join(" · ")));
+    li.append(body);
+
+    const open = () => void openAlert(row);
+    li.addEventListener("click", open);
+    li.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
+    });
+    list.append(li);
+  }
+}
+
+async function openAlert(row) {
+  shown = row;
+  where = "alert";
+  show();
+  drawAlert();
+
+  if (row.seen_at) return;
+  /* Marked through a function rather than an update, so that "seen" means
+     the same thing however it was opened, and so the only change anybody
+     signed in can make to a notification is this one. */
+  try {
+    const at = await rest("POST", "/rpc/see", { p_id: row.id });
+    row.seen_at = typeof at === "string" ? at : new Date().toISOString();
+    drawAlert();
+    drawAlerts();
+    showUnseen();
+  } catch (error) {
+    say("alert-said", "Read here, but the project was not told: " + error.message, "bad");
+  }
+}
+
+function drawAlert() {
+  const box = $("alert-one");
+  box.replaceChildren();
+  if (!shown) return;
+
+  box.append(element("h3", "", shown.title || "Untitled"));
+  box.append(element("div", "alert-foot",
+    [shown.source, (shown.level || "info"), when(shown.created_at)].filter(Boolean).join(" · ")));
+  if (shown.body) box.append(element("p", "alert-text", shown.body));
+
+  const meta = shown.meta && typeof shown.meta === "object" ? shown.meta : null;
+  if (meta && Object.keys(meta).length > 0) box.append(element("pre", "", JSON.stringify(meta, null, 2)));
+
+  box.append(element("div", "alert-foot", shown.seen_at ? "Read " + when(shown.seen_at) : "Marking as read…"));
+}
+
+$("open-alerts").addEventListener("click", () => { where = "alerts"; show(); void loadAlerts(); });
+$("alerts-back").addEventListener("click", () => { where = "menu"; show(); });
+$("alerts-refresh").addEventListener("click", () => void loadAlerts());
+$("alert-back").addEventListener("click", () => { say("alert-said", ""); where = "alerts"; show(); });
 
 /* ── installing it, and opening without the network   (ETK-092) ───── */
 
