@@ -67,6 +67,7 @@
   label span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
   input {
     width: 100%;
+    max-width: 100%;
     padding: 10px 12px;
     border: 1px solid var(--line);
     border-radius: 9px;
@@ -74,6 +75,21 @@
     color: inherit;
     font: inherit;
   }
+
+  /*
+   * ETK-101. The sideways scroll.
+   *
+   * Nothing on this page is wider than a phone -- measured at 320, 360,
+   * 375 and 393 CSS pixels, the document is exactly the width of the
+   * viewport. What moved was the viewport itself: iOS zooms in on a text
+   * field whose font is under 16px the moment it is focused, and stays
+   * zoomed after it is left. Signing in focuses two of them, so from
+   * then on the page is wider than the screen and scrolls sideways.
+   *
+   * 16px is the threshold, not a preference, so it is set in pixels and
+   * not inherited from the body's 15px.
+   */
+  input, select, textarea { font-size: 16px; }
 
   button {
     min-height: 44px;
@@ -104,7 +120,7 @@
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .gap { flex: 1; }
 
-  .said { margin: 8px 0 0; color: var(--muted); font-size: 13px; min-height: 1.4em; }
+  .said { margin: 8px 0 0; color: var(--muted); font-size: 13px; min-height: 1.4em; overflow-wrap: anywhere; }
   .bad { color: var(--bad); }
   .ok { color: var(--ok); }
 
