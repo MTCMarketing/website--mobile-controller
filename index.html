@@ -108,6 +108,13 @@
   label.check { display: flex; align-items: center; gap: 8px; min-height: 44px; margin: 6px 0; }
   label.check input { width: 22px; height: 22px; margin: 0; padding: 0; }
   label.check small { color: var(--muted); }
+  .version-row { display: flex; align-items: center; gap: 10px; margin: 6px 0 0; }
+  .version-row #version { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .version-row button { min-height: 32px; padding: 4px 12px; font-size: 13px; }
+  a.alert-link { display: inline-block; margin: 10px 0 0; color: var(--accent); font-size: 14px; text-decoration: none; }
+  a.alert-link:hover { text-decoration: underline; }
+  button.alert-data-toggle { min-height: 34px; margin: 12px 0 0; padding: 5px 12px; font-size: 13px; }
+  .alert-data { margin-top: 8px; }
   select.parts {
     min-height: 44px;
     padding: 8px 10px;
@@ -206,6 +213,9 @@
   .pill[data-tone="blocked"] { color: var(--warn); border-color: var(--warn); }
   .pill[data-tone="stopped"] { color: var(--bad); border-color: var(--bad); }
   .pill[data-tone="complete"] { color: var(--accent); border-color: var(--accent); }
+  /* ETK-109. The campaign reads as the job's heading; the gps source below
+     it is the machine's business. */
+  .job-campaign { margin: 4px 0 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
   .job-src { margin: 3px 0 6px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, monospace; }
   .job-line { margin: 2px 0; font-size: 12px; color: var(--muted); }
   .active-title { margin: 10px 0 2px; font-size: 13px; }
@@ -254,6 +264,12 @@
       <h1>Mobile Controller</h1>
       <p class="sub">The scraper's jobs, and where each has got to.</p>
       <p class="said" id="install-said" role="status" aria-live="polite"></p>
+      <!-- MBC-002. The version is on screen so an update can be seen to take,
+           and the button pulls the newest shell as simply as a PWA allows. -->
+      <p class="version-row">
+        <span id="version"></span>
+        <button class="flat" id="update" type="button">Update</button>
+      </p>
     </div>
     <!-- ETK-092. Hidden once it is already installed, since the button
          would then do nothing anybody could see. -->
@@ -346,6 +362,13 @@
       <button class="flat" id="alerts-refresh">Refresh</button>
     </div>
     <p class="said" id="alerts-said" role="status"></p>
+    <!-- ETK-110. Shown only while the badge is possible and not yet allowed:
+         iOS will not put a number on the icon until notifications are
+         permitted, and asking for that the moment somebody signs in is the
+         fastest way to be refused. -->
+    <div class="row hidden" id="badge-ask">
+      <button class="flat" id="badge-on" type="button">Show the count on the app icon</button>
+    </div>
     <ul id="alert-list" aria-label="Notifications"></ul>
   </section>
 
@@ -450,6 +473,7 @@ function show() {
   }
   if (inside) $("who-said").textContent = "Signed in as " + (state.who || "") + ".";
   watch();
+  watchBadge();
 }
 
 function say(where, text, tone) {
@@ -565,6 +589,50 @@ async function api(path, init, again = true) {
 
 const MACHINE = /^[A-Za-z][A-Za-z0-9_-]{0,19}$/;
 const TITLE_SOURCE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/* ---------------------------------------------------------------------------
+ *  Which campaign a job belongs to.   (ETK-109)
+ *
+ *  The jobs table does not carry a campaign: a job is made for a square, and
+ *  it is the planner that knows a campaign is a region at a block size. The
+ *  two meet at the stamp SPT-073 puts on the job -- its state and the size of
+ *  its square -- which is exactly what a campaign is made of. So the campaign
+ *  is found rather than stored, and the job rows stay as they are.
+ *
+ *  Campaigns live in planner_docs, which the publishable key may read.
+ *
+ *  Two campaigns can cover the same state at the same block size and differ
+ *  only by search term. When that happens both names are shown, because
+ *  picking one would be picking at random and the card would be stating
+ *  something nobody checked.
+ * ------------------------------------------------------------------------ */
+
+let campaigns = [];
+
+async function loadCampaigns() {
+  if (!state.url || !state.anon) return;
+  try {
+    const response = await fetch(
+      state.url + "/rest/v1/planner_docs?select=data,deleted&collection=eq.campaign&deleted=is.false",
+      { headers: { apikey: state.anon, authorization: "Bearer " + (state.token || state.anon) } },
+    );
+    if (!response.ok) return;
+    const rows = await response.json();
+    campaigns = (Array.isArray(rows) ? rows : [])
+      .map((row) => row && row.data)
+      .filter((one) => one && typeof one.name === "string")
+      .map((one) => ({ name: one.name, region: String(one.regionId || ""), size: Number(one.blockSize) }));
+  } catch {
+    /* No campaigns read means no campaign line. The jobs still matter. */
+  }
+}
+
+function campaignOf(job) {
+  if (!job.squareState || !job.squareSize) return "";
+  const found = campaigns.filter((one) => one.region === job.squareState && one.size === job.squareSize);
+  if (found.length === 0) return "";
+  return found.slice(0, 2).map((one) => one.name).join(" / ") + (found.length > 2 ? " +" + (found.length - 2) : "");
+}
+
 const keyOf = (job) => job.machine + "|" + job.id;
 const titleOf = (job) => "job--" + job.id + "--" + job.source;
 
@@ -600,6 +668,9 @@ function clean(item) {
     lastRun: text(item["last-run-datetime"], 40),
     completedAt: text(item["completion-datetime"], 40),
     square: text(item.square, 40),
+    // SPT-073's stamp, kept because together they name the campaign (ETK-109)
+    squareState: text(item.square_state, 10),
+    squareSize: Number.isFinite(Number(item.square_size_mi)) ? Number(item.square_size_mi) : null,
     ingest: marksOf(item.ingest),
   };
 }
@@ -878,7 +949,10 @@ function draw() {
         top.append(element("span", "made", when.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })));
       }
     }
-    li.append(top, element("p", "job-src", job.source));
+    li.append(top);
+    const campaign = campaignOf(job);
+    if (campaign) li.append(element("p", "job-campaign", campaign));
+    li.append(element("p", "job-src", job.source));
 
     const running = job.status === "running";
     // (a job whose verify pass is going is open on purpose)
@@ -997,7 +1071,7 @@ function draw() {
 }
 
 $("refresh").addEventListener("click", () => void load());
-$("open-jobs").addEventListener("click", () => { where = "jobs"; show(); void load(); });
+$("open-jobs").addEventListener("click", () => { where = "jobs"; show(); void loadCampaigns().then(load); });
 $("back").addEventListener("click", () => { where = "menu"; show(); });
 $("open-archive").addEventListener("click", () => { where = "archive"; show(); void loadArchived(); });
 $("pending").addEventListener("click", () => { onlyPending = !onlyPending; draw(); });
@@ -1417,7 +1491,10 @@ function drawArchived() {
     const vPill = element("span", "pill", "Verify: " + vLabel);
     vPill.dataset.tone = vTone;
     top.append(pill, vPill);
-    li.append(top, element("p", "job-src", job.source));
+    li.append(top);
+    const campaign = campaignOf(job);
+    if (campaign) li.append(element("p", "job-campaign", campaign));
+    li.append(element("p", "job-src", job.source));
     if (job.note) li.append(element("p", "job-line warn", job.note));
     const verified = verifiedMeter(job);
     li.append(meter("scraped", "Scraped", job.scraped, subject), meter("verified", "Verified", verified.value, subject, verified.unit));
@@ -1475,7 +1552,70 @@ function showUnseen() {
   const badge = $("unseen");
   badge.textContent = String(count);
   badge.classList.toggle("hidden", count === 0);
+  setBadge(count);
 }
+
+/* ---------------------------------------------------------------------------
+ *  The number on the home-screen icon.   (ETK-110)
+ *
+ *  Same count as the button inside, put where somebody looks before they
+ *  decide to open anything.
+ *
+ *  Two things to know about it. A badge can only be set while the app is
+ *  running, so it is right when the app is opened and refreshed while it is
+ *  on screen; for it to change while the phone is in a pocket, the Worker
+ *  would have to send a push and the service worker set the badge from it --
+ *  that is a bigger job and not what was asked for.
+ *
+ *  And iOS will not show one at all until notifications are permitted, which
+ *  is a prompt, which is why there is a button for it rather than a prompt
+ *  nobody asked for. Android shows it without one.
+ * ------------------------------------------------------------------------ */
+
+const BADGE_EVERY_MS = 60_000;
+let badgeTimer = 0;
+
+function setBadge(count) {
+  if (!("setAppBadge" in navigator)) return;
+  const done = count > 0 ? navigator.setAppBadge(count) : navigator.clearAppBadge();
+  // A phone that refuses is a phone without a badge, which is not an error
+  // worth saying out loud on a screen about scraper jobs.
+  if (done && typeof done.catch === "function") done.catch(() => {});
+}
+
+function showBadgeOffer() {
+  const possible = "setAppBadge" in navigator && "Notification" in window;
+  const asked = possible && Notification.permission !== "default";
+  $("badge-ask").classList.toggle("hidden", !possible || asked);
+}
+
+/** The count, without opening the list: for the icon, not for the screen. */
+async function countUnseen() {
+  if (!state.token) return;
+  try {
+    const rows = await rest("GET", "/notifications?select=id&seen_at=is.null&limit=99");
+    setBadge(Array.isArray(rows) ? rows.length : 0);
+  } catch {
+    /* The table may not be there yet. The icon simply carries no number. */
+  }
+}
+
+function watchBadge() {
+  window.clearInterval(badgeTimer);
+  if (!state.token) {
+    setBadge(0);
+    return;
+  }
+  void countUnseen();
+  badgeTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") void countUnseen();
+  }, BADGE_EVERY_MS);
+}
+
+/* Coming back to it is the moment the number is most likely to be stale. */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void countUnseen();
+});
 
 async function loadAlerts() {
   if (!state.token) return;
@@ -1543,6 +1683,33 @@ async function openAlert(row) {
   }
 }
 
+/**
+ * A clickable URL for the page a visit happened on.   (MBC-001)
+ *
+ * The visit-alert sends `path` as location.pathname, which on a deployed
+ * mockup is a web path and on a locally-opened file is a /D:/... path that
+ * means nothing on another machine. So a URL is built from the site and the
+ * web path when it is one; otherwise it points at the mockup's own address,
+ * which is the useful "open it" link either way.
+ */
+function pageUrl(meta) {
+  if (!meta || typeof meta !== "object") return "";
+  var path = typeof meta.path === "string" ? meta.path : "";
+  if (/^https?:\/\//i.test(path)) return path;
+
+  var site = typeof meta.site === "string" ? meta.site.trim() : "";
+  if (!site) return "";
+  var base = "https://" + site + ".mockup.wiki";
+
+  // A real web path (starts with / and is not a Windows/file path) is kept;
+  // index.html collapses to the folder. A /D:/... or D:\... is a local file.
+  var local = /^\/?[A-Za-z]:[\\/]/.test(path) || /^file:/i.test(path);
+  if (!local && path.charAt(0) === "/") {
+    return base + path.replace(/\/index\.html?$/i, "/");
+  }
+  return base + "/";
+}
+
 function drawAlert() {
   const box = $("alert-one");
   box.replaceChildren();
@@ -1554,12 +1721,50 @@ function drawAlert() {
   if (shown.body) box.append(element("p", "alert-text", shown.body));
 
   const meta = shown.meta && typeof shown.meta === "object" ? shown.meta : null;
-  if (meta && Object.keys(meta).length > 0) box.append(element("pre", "", JSON.stringify(meta, null, 2)));
+
+  /* MBC-001 (2). A link to the page itself, not the /D: path that only
+     exists on the machine the mockup was opened from. Built from the site
+     and the web path when there is one; a local file path falls back to the
+     mockup's own address. */
+  const url = pageUrl(meta);
+  if (url) {
+    const open = element("a", "alert-link", "Open the page ↗");
+    open.href = url;
+    open.target = "_blank";
+    open.rel = "noopener";
+    box.append(open);
+  }
+
+  /* MBC-001 (1). The raw data is hidden behind a button rather than shown by
+     default — it is for when something looks wrong, not for every read. */
+  if (meta && Object.keys(meta).length > 0) {
+    const toggle = element("button", "flat alert-data-toggle", "Show data");
+    toggle.type = "button";
+    const pre = element("pre", "alert-data hidden", JSON.stringify(meta, null, 2));
+    toggle.addEventListener("click", () => {
+      const hidden = pre.classList.toggle("hidden");
+      toggle.textContent = hidden ? "Show data" : "Hide data";
+    });
+    box.append(toggle, pre);
+  }
 
   box.append(element("div", "alert-foot", shown.seen_at ? "Read " + when(shown.seen_at) : "Marking as read…"));
 }
 
-$("open-alerts").addEventListener("click", () => { where = "alerts"; show(); void loadAlerts(); });
+$("badge-on").addEventListener("click", async () => {
+  try {
+    await Notification.requestPermission();
+  } catch {
+    /* older Safari hands back a callback rather than a promise */
+  }
+  showBadgeOffer();
+  setBadge(unseenCount());
+  say("alerts-said", Notification.permission === "granted"
+    ? "The icon will carry the unread count while the app is open."
+    : "Not allowed, so the icon stays plain. The count is still here.");
+});
+
+$("open-alerts").addEventListener("click", () => { where = "alerts"; show(); showBadgeOffer(); void loadAlerts(); });
 $("alerts-back").addEventListener("click", () => { where = "menu"; show(); });
 $("alerts-refresh").addEventListener("click", () => void loadAlerts());
 $("alert-back").addEventListener("click", () => { say("alert-said", ""); where = "alerts"; show(); });
@@ -1611,6 +1816,49 @@ updateInstallButton();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {
     say("install-said", "This browser could not prepare the app for installing.");
+  });
+}
+
+/* ---------------------------------------------------------------------------
+ *  Updating the app, and showing which version is running.   (MBC-002)
+ *
+ *  A PWA cannot overwrite itself the way a store app does, but it can be
+ *  made to fetch the newest shell and swap to it in one press. Update tells
+ *  the service worker to check, steps a waiting one in, and reloads; a
+ *  reload with the worker refreshed is the whole of a PWA update.
+ *
+ *  The version is on screen so the update can be seen to take — if the
+ *  number changes after pressing Update, it worked.
+ * ------------------------------------------------------------------------- */
+var APP_VERSION = "2026.11.18";
+
+$("version").textContent = "v" + APP_VERSION;
+
+$("update").addEventListener("click", async () => {
+  say("install-said", "Checking for an update…");
+  try {
+    if ("serviceWorker" in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) {
+        await reg.update();
+        if (reg.waiting) reg.waiting.postMessage({ type: "skip-waiting" });
+      }
+    }
+    // Reload from the network so the newest shell is what loads next.
+    location.reload();
+  } catch (error) {
+    say("install-said", "Could not update automatically. Close the app fully and reopen it.", true);
+  }
+});
+
+/* When a new worker takes over, the page it controls is stale — reload once
+   so what is on screen matches the worker that is now serving it. */
+if ("serviceWorker" in navigator) {
+  let swapped = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (swapped) return;
+    swapped = true;
+    location.reload();
   });
 }
 

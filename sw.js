@@ -1,4 +1,4 @@
-const CACHE = "mobile-controller-shell-v1";
+const CACHE = "mobile-controller-shell-v2";  // bumped for MBC-002
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -11,6 +11,12 @@ const APP_SHELL = [
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
   self.skipWaiting();
+});
+
+// MBC-002. The Update button posts this so a worker that installed but is
+// waiting takes over now rather than on the next cold start.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "skip-waiting") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
